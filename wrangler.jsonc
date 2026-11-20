@@ -2,7 +2,7 @@
   "name": "cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "./dist" },
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
   "routes": [{ "pattern": "cloud.brocksville.com", "custom_domain": true }],
   "vars": {
     "TEAM_DOMAIN": "brock-family.cloudflareaccess.com",

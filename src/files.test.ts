@@ -224,3 +224,92 @@ test("folders nest to any depth, including inside Family, and files move between
   assert.equal((await json(await dad(`/api/files?parent=${trips.id}`))).parent.name, "Trips");
   assert.equal((await mom(`/api/files/${f.id}`, { method: "PATCH", body: JSON.stringify({ parent: null }) })).status, 400); // Family files cannot go to someone's top level
 });
+
+// ---- public link shares ----
+const pub = (path: string, init?: RequestInit) => fetch(BASE + path, init); // no identity header: this is what an outsider sends
+const makeShare = async (f: typeof mom, node: number, days: number | null = 7) => json(await f("/api/shares", { method: "POST", body: JSON.stringify({ node, days }) }));
+const putFile = async (f: typeof mom, name: string, data: Uint8Array, parent?: number, type = "image/png") =>
+  json(await f(`/api/files?name=${encodeURIComponent(name)}${parent ? `&parent=${parent}` : ""}`, { method: "PUT", body: data, headers: { "content-type": type } }));
+
+test("link share of a file: public page, bytes, ranges and safe HTML", async () => {
+  const data = pattern(5000);
+  const f = await putFile(mom, "<img src=x onerror=alert(1)>.png", data);
+  const s = await makeShare(mom, f.id);
+  assert.match(s.token, /^[\w-]{22}$/);
+
+  const page = await pub(`/s/${s.token}`);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.ok(html.includes("&#60;img src=x onerror=alert(1)&#62;.png"), "file name is escaped");
+  assert.ok(!html.includes("<img src=x"), "no raw markup from names");
+  assert.ok(html.includes("--brand"), "app stylesheet is inlined");
+  assert.match(page.headers.get("content-security-policy")!, /default-src 'none'/);
+  assert.equal(page.headers.get("referrer-policy"), "no-referrer");
+
+  const raw = await pub(`/s/${s.token}/f/${f.id}`);
+  assert.deepEqual(new Uint8Array(await raw.arrayBuffer()), data);
+  const part = await pub(`/s/${s.token}/f/${f.id}`, { headers: { range: "bytes=10-19" } });
+  assert.equal(part.status, 206);
+  assert.deepEqual(new Uint8Array(await part.arrayBuffer()), data.slice(10, 20));
+  assert.match((await pub(`/s/${s.token}/f/${f.id}?download=1`)).headers.get("content-disposition")!, /^attachment/);
+
+  const other = await putFile(mom, "not-shared.png", pattern(10));
+  assert.equal((await pub(`/s/${s.token}/f/${other.id}`)).status, 404); // a link opens only what it was made for
+  assert.equal((await pub(`/s/${s.token}`, { method: "POST" })).status, 404);
+  assert.equal((await pub("/s/AAAAAAAAAAAAAAAAAAAAAA")).status, 404); // unknown token
+});
+
+test("link share of a folder reaches everything inside it and nothing else", async () => {
+  const parent = await mkdir(mom, "ShareParent");
+  const dir = await mkdir(mom, "Shared dir", parent.id);
+  const sub = await mkdir(mom, "Sub", dir.id);
+  const a = await putFile(mom, "a.png", pattern(10), dir.id);
+  const b = await putFile(mom, "b.png", pattern(20), sub.id);
+  const outside = await putFile(mom, "outside.png", pattern(30), parent.id);
+  const { token } = await makeShare(mom, dir.id);
+
+  const root = await (await pub(`/s/${token}`)).text();
+  assert.ok(root.includes(">a.png<") && root.includes(">Sub<") && !root.includes("outside.png"));
+  const inner = await pub(`/s/${token}/d/${sub.id}`);
+  assert.equal(inner.status, 200);
+  const innerHtml = await inner.text();
+  assert.ok(innerHtml.includes(">b.png<") && innerHtml.includes(`href="/s/${token}"`), "subfolder page lists its file and links back to the share root");
+  assert.equal((await pub(`/s/${token}/f/${b.id}`)).status, 200);
+
+  assert.equal((await pub(`/s/${token}/f/${outside.id}`)).status, 404);
+  assert.equal((await pub(`/s/${token}/d/${parent.id}`)).status, 404); // cannot climb above the shared folder
+
+  await mom(`/api/files/${sub.id}`, { method: "DELETE" });
+  assert.equal((await pub(`/s/${token}/f/${b.id}`)).status, 404); // trashed folder hides what is inside
+  await mom(`/api/files/${sub.id}/restore`, { method: "POST" });
+  assert.equal((await pub(`/s/${token}/f/${b.id}`)).status, 200);
+  await mom(`/api/files/${dir.id}`, { method: "DELETE" });
+  assert.equal((await pub(`/s/${token}`)).status, 404); // trashing the shared item switches the link off
+  assert.ok(a.id);
+});
+
+test("link share lifecycle: validation, listing, expiry, revoke and who may manage links", async () => {
+  const f = await putFile(mom, "lifecycle.png", pattern(10));
+  for (const days of [0, 366, 1.5, "7"]) assert.equal((await mom("/api/shares", { method: "POST", body: JSON.stringify({ node: f.id, days }) })).status, 400);
+  const forever = await makeShare(mom, f.id, null);
+  assert.equal(forever.expires_at, null);
+  const week = await makeShare(mom, f.id, 7);
+  assert.ok(Math.abs(week.expires_at - (Date.now() / 1000 + 7 * 86400)) < 60);
+  const listed = (await json(await mom(`/api/shares?node=${f.id}`))).items;
+  assert.deepEqual(listed.map((l: any) => l.id), [week.id, forever.id]); // newest first
+
+  assert.equal((await dad(`/api/shares?node=${f.id}`)).status, 404); // dad cannot see mom's private file or its links
+  assert.equal((await dad("/api/shares", { method: "POST", body: JSON.stringify({ node: f.id, days: 1 }) })).status, 404);
+  assert.equal((await dad(`/api/shares/${week.id}`, { method: "DELETE" })).status, 404);
+
+  wrangler("d1", "execute", "DB", "--local", "--persist-to", dir, "--command", `update shares set expires_at = 1 where id = ${week.id}`);
+  assert.equal((await pub(`/s/${week.token}`)).status, 404); // expired
+  assert.equal((await pub(`/s/${forever.token}`)).status, 200);
+  assert.equal((await mom(`/api/shares/${forever.id}`, { method: "DELETE" })).status, 204);
+  assert.equal((await pub(`/s/${forever.token}`)).status, 404); // revoked
+
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const shared = await putFile(mom, "family-pic.png", pattern(10), family.id);
+  const fam = await makeShare(dad, shared.id); // any family member can link an item in Family...
+  assert.equal((await mom(`/api/shares/${fam.id}`, { method: "DELETE" })).status, 204); // ...and any can revoke it
+});

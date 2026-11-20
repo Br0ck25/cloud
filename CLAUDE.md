@@ -17,6 +17,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
 - `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
 - `src/uploads.ts` large resumable uploads (multipart), used for files over 8 MiB
+- `src/shares.ts` manage public links (signed in); `src/public.ts` the public `/s/<token>` pages (no sign-in, no scripts)
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan
 

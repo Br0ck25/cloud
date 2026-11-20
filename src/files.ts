@@ -1,6 +1,6 @@
 import type { User } from "./auth";
 
-type Node = {
+export type Node = {
   id: number; parent_id: number | null; owner_id: number | null; name: string; kind: "file" | "folder";
   size: number | null; mime: string | null; blob_key: string | null; thumb_key: string | null; trashed_at: number | null;
 };
@@ -15,7 +15,7 @@ export const err = (status: number, error: string) => Response.json({ error }, {
 export const cleanName = (n: unknown) => (typeof n === "string" && /^[^/\0]{1,255}$/.test(n.trim()) && !/^\.\.?$/.test(n.trim()) ? n.trim() : null);
 
 /** A node the user may touch: their own or in the Family space. Null if missing or not theirs. */
-const getNode = (env: Env, user: User, id: unknown) =>
+export const getNode = (env: Env, user: User, id: unknown) =>
   Number.isInteger(id)
     ? env.DB.prepare("select * from nodes where id = ? and (owner_id is null or owner_id = ?)").bind(id, user.id).first<Node>()
     : Promise.resolve(null);
@@ -41,6 +41,34 @@ export const insertFile = (env: Env, p: { id: number | null; owner: number | nul
   guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key) values (?, ?, ?, 'file', ?, ?, ?)").bind(p.id, p.owner, name, size, mime, key).run());
 
 const isFamilyRoot = (n: Node) => n.parent_id === null && n.owner_id === null;
+
+/** Streams a file's bytes with Range support. Shared by signed-in downloads and public links. */
+export async function serveFile(req: Request, env: Env, node: Node, download: boolean): Promise<Response> {
+  if (node.kind !== "file" || !node.blob_key) return err(400, "not a file");
+  const from = /^bytes=(\d+)-/.exec(req.headers.get("range") ?? "");
+  if (from && Number(from[1]) >= (node.size ?? 0)) return err(416, "range not satisfiable");
+  const obj = await env.FILES.get(node.blob_key, { range: req.headers });
+  if (!obj) return err(404, "file data missing");
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set("etag", obj.httpEtag);
+  headers.set("accept-ranges", "bytes");
+  headers.set("x-content-type-options", "nosniff");
+  const inline = INLINE.test(node.mime ?? "") && !download;
+  headers.set("content-disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(node.name)}`);
+  const r = obj.range as { offset?: number; length?: number } | undefined;
+  const start = r?.offset ?? 0;
+  const length = r?.length ?? obj.size - start;
+  const partial = start !== 0 || length !== obj.size; // R2 reports a range even when none was asked for
+  headers.set("content-length", String(length));
+  if (partial) headers.set("content-range", `bytes ${start}-${start + length - 1}/${obj.size}`);
+  return new Response(obj.body, { status: partial ? 206 : 200, headers });
+}
+
+export async function serveThumb(env: Env, node: Node): Promise<Response> {
+  const obj = node.thumb_key && (await env.FILES.get(node.thumb_key));
+  return obj ? new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" } }) : err(404, "no thumbnail");
+}
 
 export async function handleFiles(req: Request, env: Env, user: User, url: URL): Promise<Response | undefined> {
   const { pathname, searchParams } = url;
@@ -111,10 +139,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
   if (node.trashed_at) return err(404, "not found");
 
   if (m[2] === "/thumb") {
-    if (req.method === "GET") {
-      const obj = node.thumb_key && (await env.FILES.get(node.thumb_key));
-      return obj ? new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" } }) : err(404, "no thumbnail");
-    }
+    if (req.method === "GET") return serveThumb(env, node);
     if (req.method === "PUT") {
       if (node.kind !== "file") return err(400, "not a file");
       if (req.headers.get("content-type") !== "image/jpeg") return err(400, "thumbnails must be image/jpeg");
@@ -130,27 +155,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
     return undefined;
   }
 
-  if (req.method === "GET") {
-    if (node.kind !== "file" || !node.blob_key) return err(400, "not a file");
-    const from = /^bytes=(\d+)-/.exec(req.headers.get("range") ?? "");
-    if (from && Number(from[1]) >= (node.size ?? 0)) return err(416, "range not satisfiable");
-    const obj = await env.FILES.get(node.blob_key, { range: req.headers });
-    if (!obj) return err(404, "file data missing");
-    const headers = new Headers();
-    obj.writeHttpMetadata(headers);
-    headers.set("etag", obj.httpEtag);
-    headers.set("accept-ranges", "bytes");
-    headers.set("x-content-type-options", "nosniff");
-    const inline = INLINE.test(node.mime ?? "") && !searchParams.has("download");
-    headers.set("content-disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(node.name)}`);
-    const r = obj.range as { offset?: number; length?: number } | undefined;
-    const start = r?.offset ?? 0;
-    const length = r?.length ?? obj.size - start;
-    const partial = start !== 0 || length !== obj.size; // R2 reports a range even when none was asked for
-    headers.set("content-length", String(length));
-    if (partial) headers.set("content-range", `bytes ${start}-${start + length - 1}/${obj.size}`);
-    return new Response(obj.body, { status: partial ? 206 : 200, headers });
-  }
+  if (req.method === "GET") return serveFile(req, env, node, searchParams.has("download"));
 
   if (isFamilyRoot(node)) return err(400, "the Family folder cannot be changed");
 

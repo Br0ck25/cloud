@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { Item } from "./api";
 import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
+import { ShareSheet } from "./ShareSheet";
 
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const size = (n: number | null) => (n == null ? "" : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(1)} GB`);
@@ -54,6 +55,7 @@ export function App() {
   const [drag, setDrag] = useState(false);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [moving, setMoving] = useState<Item | null>(null);
+  const [sharing, setSharing] = useState<Item | null>(null);
 
   const load = () =>
     (inTrash ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderId))
@@ -126,6 +128,7 @@ export function App() {
                   <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
                     <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
                     <button onClick={() => setMoving(i)}>Move</button>
+                    <button onClick={() => setSharing(i)}>Share link</button>
                     {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
                     <button onClick={() => act(api.trash(i.id))}>Delete</button>
                   </div>
@@ -139,6 +142,7 @@ export function App() {
 
       {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}
         ok={(to) => act(api.move(moving.id, to ?? null))} close={() => setMoving(null)} />}
+      {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 
       {open && (
