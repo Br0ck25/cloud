@@ -1,3 +1,5 @@
+import { takenAt } from "./exif";
+
 export type Item = {
   id: number; parent_id: number | null; name: string; kind: "file" | "folder";
   size: number | null; mime: string | null; updated_at: number; taken_at?: number; shared: number; thumb: number; trashed_at?: number; folder?: string | null;
@@ -79,7 +81,7 @@ const SINGLE_MAX = 8 * 1024 * 1024; // up to one part: a single request; bigger 
 /** Uploads a file; picking the same file again after a failure or reload resumes where it stopped. */
 export async function upload(file: File, parent: number | undefined, onProgress: (fraction: number) => void): Promise<Item> {
   const mime = file.type || "application/octet-stream";
-  const taken = Math.floor(file.lastModified / 1000); // the phone's own date for the photo; orders the Photos timeline
+  const taken = await takenAt(file); // when the photo was taken (from inside the file if it says); orders the Photos timeline
   if (file.size <= SINGLE_MAX) return put<Item>(`/api/files?name=${encodeURIComponent(file.name)}${parent ? `&parent=${parent}` : ""}&taken=${taken}`, file, mime, onProgress);
   const s = await call<{ id: string; partSize: number; parts: number[] }>("/api/uploads", send("POST", { name: file.name, parent, size: file.size, mime, taken }));
   const done = new Set(s.parts);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
 import { makeThumb } from "./thumb";
+import { takenAt } from "./exif";
 
 const ROOT = "Camera backup"; // in My files; photos go in a subfolder per year
 type Dest = { id: number; have: Set<string> }; // what that folder already holds, as "name|size"
@@ -37,7 +38,7 @@ export function BackupSheet({ files, changed, close }: { files: File[]; changed:
       for (const f of files) {
         if (stop.current) break;
         try {
-          const dest = await destFor(String(new Date(f.lastModified).getFullYear()));
+          const dest = await destFor(String(new Date((await takenAt(f)) * 1000).getFullYear())); // the year folder follows the photo's own date
           if (dest.have.has(key(f.name, f.size))) { skipped++; setCounts({ done, skipped }); continue; }
           setCurrent(f.name); setPct(0);
           const saved = await api.retry(() => api.upload(f, dest.id, setPct), 3);

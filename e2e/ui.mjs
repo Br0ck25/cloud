@@ -309,6 +309,25 @@ try {
     check(z3.name === "lonely.txt" && z3.bytes.toString() === "just me", "one file downloads as itself, not a zip: " + z3.name);
   });
 
+  await step("a photo is dated by what is inside it, not by the day it was copied", async () => {
+    const p = await newPage();
+    await home(p);
+    const fixtures = ["exif-offset.jpg", "exif.heic"].map((n) => join(process.cwd(), "src/fixtures", n)); // both files are dated "today" on disk
+    await upload(p, ...fixtures);
+    await p.waitForSelector('li:has-text("exif-offset.jpg")');
+    await p.waitForSelector('li:has-text("exif.heic")');
+    const photos = (await (await p.request.get(U + "/api/photos?limit=200")).json()).items;
+    const when = (n) => photos.find((i) => i.name === n)?.taken_at;
+    check(when("exif-offset.jpg") === Date.UTC(2019, 6, 4, 15, 30, 45) / 1000 - 2 * 3600, "jpeg dated 2019 with its time-zone offset: " + when("exif-offset.jpg"));
+    check(when("exif.heic") === Math.floor(new Date(2021, 11, 25, 8, 15, 0).getTime() / 1000), "heic dated 2021: " + when("exif.heic"));
+    await p.goto(U + "/#/photos");
+    await p.waitForSelector(".month");
+    await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await p.waitForFunction(() => !document.querySelector(".end")?.textContent, null, { timeout: 15000 });
+    const months = await p.locator(".month").allTextContents();
+    check(months.includes("July 2019") && months.includes("December 2021"), "the timeline groups them under their real months: " + months.join(", "));
+  });
+
   await step("no page broke the Content-Security-Policy", async () => { check(cspViolations.length === 0, cspViolations.join(" | ")); });
 } catch (e) {
   failed++;
