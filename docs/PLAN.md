@@ -47,7 +47,7 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
    - Dropped from v1: per-person shares. Private files live in your own space; anything for everyone goes under Family (open to all members to read and edit; a member's folder under Family is not private).
 7. **Admin, search, versions, cleanup** (in progress, deployed in steps):
    - 7a. (done) Admin page `#/admin` (admins only, from the account menu): add a family member by email, remove or restore their access (their files stay and still count), make admin or member, total/Family/per-person storage. `src/admin.ts`, `migrations/0006_user_active.sql`. Backup status joins this page in milestone 8.
-   - 7b. Search by file name: plain case-insensitive substring match, not FTS5 (FTS5 tables break D1 export and add triggers; revisit if it gets slow).
+   - 7b. (done) Search by file name: plain case-insensitive substring match, not FTS5 (FTS5 tables break D1 export and add triggers; revisit if it gets slow). Searches your files plus Family, skips the trash and anything inside trashed folders, max 50 results, each shows its folder.
    - 7c. Versions: upload a new version of a file, list versions, restore an older one (last 10 kept).
    - 7d. Nightly cron: purge trash older than 30 days (R2 blobs, thumbnails, versions, shares) and abandoned uploads older than 6 days.
 8. **Backup + deploy hardening**: nightly copy to second bucket, billing alert, Access exemption for `/s/*` only. Check: delete a blob from primary, restore from backup.

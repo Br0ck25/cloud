@@ -1,6 +1,6 @@
 export type Item = {
   id: number; parent_id: number | null; name: string; kind: "file" | "folder";
-  size: number | null; mime: string | null; updated_at: number; shared: number; thumb: number; trashed_at?: number;
+  size: number | null; mime: string | null; updated_at: number; shared: number; thumb: number; trashed_at?: number; folder?: string | null;
 };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -19,6 +19,7 @@ export const admin = () => call<{ users: Person[]; family_bytes: number; total_b
 export const addPerson = (email: string) => call("/api/admin/users", send("POST", { email }));
 export const editPerson = (id: number, patch: { role?: string; active?: boolean }) => call(`/api/admin/users/${id}`, send("PATCH", patch));
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
+export const search = (q: string) => call<{ items: Item[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.items);
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));

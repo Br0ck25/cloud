@@ -46,6 +46,9 @@ export function App() {
   const [sharing, setSharing] = useState<Item | null>(null);
   const [inbox, setInbox] = useState<File[] | null>(null); // files shared into the app from the phone's Share sheet
   const saving = useRef(false);
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<Item[] | null>(null); // search results, or null when not searching
+  const [tick, setTick] = useState(0); // bumped after changes so open search results refresh
 
   const latest = useRef(0);
   // Reads the address at call time and ignores out-of-date answers, so a load that finishes after you moved elsewhere cannot overwrite the screen.
@@ -63,7 +66,14 @@ export function App() {
   }, [hash]);
   useEffect(() => { api.me().then(setMe, () => {}); }, []);
 
-  const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
+  useEffect(() => { setQuery(""); }, [hash]);
+  useEffect(() => {
+    if (!query.trim()) return setFound(null);
+    const t = setTimeout(() => api.search(query.trim()).then(setFound, (e) => setError(e.message)), 250);
+    return () => clearTimeout(t);
+  }, [query, tick]);
+
+  const act = (p: Promise<unknown>) => p.then(() => { load(); setTick((t) => t + 1); }, (e) => setError(e.message));
 
   async function addFiles(files: File[], dest = folderId) {
     const awake = await navigator.wakeLock?.request("screen").catch(() => null); // keeps a phone from suspending the upload
@@ -109,6 +119,8 @@ export function App() {
         </div>
       )}
 
+      {!inTrash && !inAdmin && <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />}
+
       {error && <p class="error">{error} <button class="btn" onClick={() => load()}>Retry</button> <button class="btn" onClick={() => location.reload()}>Reload</button></p>}
       {uploads.map((u) => (
         <div class="upload" key={u.name}>
@@ -119,7 +131,7 @@ export function App() {
       ))}
 
       {!inAdmin && <ul class="list">
-        {items.map((i) => {
+        {(found ?? items).map((i) => {
           const locked = i.shared === 1 && i.parent_id === null;
           return (
             <li key={i.id}>
@@ -129,7 +141,7 @@ export function App() {
                   <Tile i={i} /><span class="name">{i.name}</span>
                 </a>
               )}
-              <span class="meta">{locked ? "Shared" : `${size(i.size)} ${when(i.updated_at)}`}</span>
+              <span class="meta">{found ? `in ${i.folder ?? "My files"}` : locked ? "Shared" : `${size(i.size)} ${when(i.updated_at)}`}</span>
               {inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && (
                 <details class="more"><summary aria-label="Actions">⋮</summary>
                   <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
@@ -144,7 +156,7 @@ export function App() {
             </li>
           );
         })}
-        {!items.length && !error && <li class="empty">{inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
+        {!(found ?? items).length && !error && <li class="empty">{found ? `No matches for "${query.trim()}"` : inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
       </ul>}
 
       {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}

@@ -351,3 +351,30 @@ test("admin: only admins, adding and removing family, storage numbers", async ()
   assert.equal(after.family_bytes - before.family_bytes, 1000);
   assert.equal(after.total_bytes, after.users.reduce((t: number, u: any) => t + u.bytes, after.family_bytes));
 });
+
+// ---- search ----
+test("search finds names anywhere you can see, and nothing you cannot", async () => {
+  const find = async (f: typeof mom, q: string) => (await json(await f(`/api/search?q=${encodeURIComponent(q)}`))).items;
+  const album = await mkdir(mom, "Quokka Album");
+  const deep = await mkdir(mom, "deeper", album.id);
+  const a = await putFile(mom, "QUOKKA at beach.png", pattern(5), deep.id);
+  await putFile(mom, "100%_real.png", pattern(5));
+  await putFile(mom, "100 real.png", pattern(5));
+  await putFile(mom, "dad-cannot-see-quokka.png", pattern(5));
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  await putFile(mom, "quokka-family.png", pattern(5), family.id);
+
+  const hits = await find(mom, "quokka");
+  assert.deepEqual(hits.map((h: any) => h.name), ["Quokka Album", "dad-cannot-see-quokka.png", "QUOKKA at beach.png", "quokka-family.png"].sort((x, y) => (x === "Quokka Album" ? -1 : y === "Quokka Album" ? 1 : x.toLowerCase().localeCompare(y.toLowerCase()))));
+  assert.equal(hits.find((h: any) => h.id === a.id).folder, "deeper"); // tells you where it lives
+  assert.deepEqual((await find(dad, "quokka")).map((h: any) => h.name), ["quokka-family.png"]); // only Family's file, none of mom's private ones
+  assert.equal((await find(mom, "%_")).length, 1); // wildcards are matched literally
+  assert.equal((await find(mom, "nonexistent-zzz")).length, 0);
+  assert.equal((await mom("/api/search?q=")).status, 400);
+  assert.equal((await mom("/api/search?q=" + "x".repeat(101))).status, 400);
+
+  await mom(`/api/files/${deep.id}`, { method: "DELETE" }); // trash a folder: what is inside disappears from search too
+  assert.ok(!(await find(mom, "quokka")).some((h: any) => h.id === a.id || h.id === deep.id));
+  await mom(`/api/files/${deep.id}/restore`, { method: "POST" });
+  assert.ok((await find(mom, "quokka")).some((h: any) => h.id === a.id));
+});

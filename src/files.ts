@@ -93,6 +93,20 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
     return Response.json({ items: results });
   }
 
+  if (pathname === "/api/search" && req.method === "GET") {
+    const q = (searchParams.get("q") ?? "").trim();
+    if (!q || q.length > 100) return err(400, "enter something to search for");
+    // "dead" = everything in the trash plus everything inside trashed folders
+    const { results } = await env.DB.prepare(
+      `with recursive dead(id) as (select id from nodes where trashed_at is not null union all select n.id from nodes n join dead on n.parent_id = dead.id)
+       select n.id, n.parent_id, n.name, n.kind, n.size, n.mime, n.updated_at, n.owner_id is null as shared, n.thumb_key is not null as thumb, p.name as folder
+       from nodes n left join nodes p on p.id = n.parent_id
+       where n.id not in (select id from dead) and (n.owner_id = ? or n.owner_id is null) and n.name like ? escape '\\'
+       order by n.kind = 'file', n.name collate nocase limit 50`,
+    ).bind(user.id, `%${q.replace(/[\\%_]/g, "\\$&")}%`).all();
+    return Response.json({ items: results });
+  }
+
   if (!m) return undefined;
 
   // /api/files: list a folder, or upload into one
