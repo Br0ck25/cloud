@@ -40,6 +40,9 @@ progress { width: 40%; accent-color: var(--brand); }
 .sheet h2 { margin: 0; font-size: 1.15rem; }
 .sheet input { font: inherit; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
 .sheet input:focus { outline: 2px solid var(--brand); border-color: transparent; }
+.picker { max-height: 45vh; overflow: auto; }
+.crumb { display: flex; align-items: center; gap: 10px; }
+.btn:disabled { opacity: .45; cursor: default; }
 .row { display: flex; gap: 8px; justify-content: flex-end; }
 .vbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; } .vbar b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view img, .view video { max-width: 100%; max-height: 80vh; object-fit: contain; margin: 0 auto; }

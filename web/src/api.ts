@@ -15,6 +15,7 @@ export const list = (parent?: number) => call<{ parent: Item | null; items: Item
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));
+export const move = (id: number, parent: number | null) => call(`/api/files/${id}`, send("PATCH", { parent }));
 export const trash = (id: number) => call(`/api/files/${id}`, send("DELETE"));
 export const restore = (id: number) => call(`/api/files/${id}/restore`, send("POST"));
 export const thumbUrl = (id: number) => `/api/files/${id}/thumb`;

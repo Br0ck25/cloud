@@ -211,3 +211,16 @@ test("large upload: size, ownership and destination rules", async () => {
   assert.equal(shared.shared, 1);
   assert.deepEqual(await bytesOf(mom, shared.id), small); // mom can read what dad put in Family
 });
+
+test("folders nest to any depth, including inside Family, and files move between them", async () => {
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const dadsFolder = await mkdir(dad, "Dad", family.id);
+  const photos = await mkdir(dad, "Photos", dadsFolder.id);
+  const trips = await mkdir(mom, "Trips", photos.id); // mom can add inside dad's folder: Family is open to everyone
+  const f = await json(await upload(mom, "lake.png", new Uint8Array([5]), family.id));
+  const moved = await mom(`/api/files/${f.id}`, { method: "PATCH", body: JSON.stringify({ parent: trips.id }) });
+  assert.equal(moved.status, 200);
+  assert.deepEqual(await names(dad, trips.id), ["lake.png"]);
+  assert.equal((await json(await dad(`/api/files?parent=${trips.id}`))).parent.name, "Trips");
+  assert.equal((await mom(`/api/files/${f.id}`, { method: "PATCH", body: JSON.stringify({ parent: null }) })).status, 400); // Family files cannot go to someone's top level
+});
