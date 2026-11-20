@@ -1,0 +1,7 @@
+{
+  "name": "cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "cloud-files" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "cloud", "database_id": "REPLACE_AFTER_d1_create" }]
+}
