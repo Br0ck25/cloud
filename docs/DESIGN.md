@@ -37,5 +37,6 @@ Look: modern, quiet and sleek. Cool light-gray canvas, white rounded cards, one 
 - **Buttons** `.btn`; add `.primary` for the single main action. Never two primaries in one view.
 - **Floating menu** `.more` / `.menu` (native `<details>`), closes itself after any action.
 - **Sheet** `.modal` + `.sheet`: for asking a short question (replaces `prompt()`). **Viewer** `.modal` + `.view`: full previews.
+- **Viewer** `.modal` + `.view` + `.stage` (`web/src/Viewer.tsx`): moves through the previewable files of the current list (folder or search results) by swipe (sideways, 50px, ignored on video/audio/PDF), arrow keys, or the `.nav` ‹ › buttons; shows "n / total". Esc closes.
 - **Status rows** `.upload`: card with name and `<progress>` (accent follows `--brand`) or `.error` text.
 - Empty states: centered `--mut` text, no card.

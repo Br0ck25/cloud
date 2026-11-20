@@ -5,6 +5,7 @@ import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
 import { ShareSheet } from "./ShareSheet";
 import { VersionsSheet } from "./VersionsSheet";
+import { Viewer } from "./Viewer";
 import { BackupSheet } from "./BackupSheet";
 import { clearInbox, readInbox } from "./inbox";
 import { Admin } from "./Admin";
@@ -177,17 +178,7 @@ export function App() {
       {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 
-      {open && (
-        <div class="modal" onClick={() => setOpen(null)}>
-          <div class="view" onClick={(e) => e.stopPropagation()}>
-            <div class="vbar"><b>{open.name}</b><a class="btn" href={api.fileUrl(open.id, true)}>Download</a><button class="btn" onClick={() => setOpen(null)}>Close</button></div>
-            {open.mime?.startsWith("image/") ? <img src={api.fileUrl(open.id)} alt={open.name} />
-              : open.mime?.startsWith("video/") ? <video src={api.fileUrl(open.id)} controls autoplay />
-              : open.mime?.startsWith("audio/") ? <audio src={api.fileUrl(open.id)} controls autoplay />
-              : <iframe src={api.fileUrl(open.id)} title={open.name} />}
-          </div>
-        </div>
-      )}
+      {open && <Viewer items={(found ?? items).filter((i) => i.kind === "file" && canPreview(i))} current={open} onChange={setOpen} close={() => setOpen(null)} />}
     </div>
   );
 }
