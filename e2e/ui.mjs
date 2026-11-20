@@ -375,6 +375,32 @@ try {
     await p.waitForSelector("text=Link revoked");
   });
 
+  await step("a removed person's files can be handed over to someone else", async () => {
+    const p = await newPage();
+    const as = (email) => ({ "x-dev-email": email });
+    await p.request.post(U + "/api/admin/users", { data: { email: "leaver@e2e.test" } });
+    const folder = await (await p.request.post(U + "/api/folders", { data: { name: "Holiday" }, headers: as("leaver@e2e.test") })).json();
+    await p.request.put(`${U}/api/files?name=${encodeURIComponent("tickets.txt")}&parent=${folder.id}`, { data: Buffer.from("boarding passes"), headers: { ...as("leaver@e2e.test"), "content-type": "text/plain" } });
+    const who = (await (await p.request.get(U + "/api/admin")).json()).users.find((u) => u.email === "leaver@e2e.test");
+    await p.request.patch(`${U}/api/admin/users/${who.id}`, { data: { active: false } });
+
+    await p.goto(U + "/#/admin");
+    await p.waitForSelector("li:has-text('leaver@e2e.test'):has-text('No access')");
+    await row(p, "leaver@e2e.test").locator("summary").click();
+    await row(p, "leaver@e2e.test").locator("text=Hand over files").click();
+    await p.waitForSelector(".sheet h2:has-text('Hand over files')");
+    check((await p.locator('.sheet select option').allTextContents()).includes("The Family folder (everyone)"), "Family is one of the choices");
+    await p.selectOption('.sheet select[aria-label="Hand over to"]', { label: "Me" });
+    await p.click(".sheet button.primary"); // the heading also says "Hand over"
+    await p.waitForSelector("text=Moved 2 items");
+    check((await (await p.request.get(U + "/api/admin")).json()).users.find((u) => u.email === "leaver@e2e.test").bytes === 0, "their account is now empty");
+    await home(p);
+    await p.click('a.main:has-text("Files from leaver@e2e.test")');
+    await p.waitForSelector('h1:has-text("Files from leaver@e2e.test")');
+    await p.click('a.main:has-text("Holiday")');
+    await p.waitForSelector('li:has-text("tickets.txt")');
+  });
+
   await step("no page broke the Content-Security-Policy", async () => { check(cspViolations.length === 0, cspViolations.join(" | ")); });
 } catch (e) {
   failed++;

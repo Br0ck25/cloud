@@ -15,13 +15,14 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
-- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/BackupSheet.tsx` phone photo backup, `src/Viewer.tsx` swipeable preview, `src/selection.ts` + `SelectBar.tsx` picking items for bulk actions, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
+- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/exif.ts` date taken from inside a photo, `src/BackupSheet.tsx` phone photo backup, `src/Viewer.tsx` swipeable preview, `src/selection.ts` + `SelectBar.tsx` picking items for bulk actions, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
 - `src/uploads.ts` large resumable uploads (multipart), used for files over 8 MiB
 - `src/admin.ts` admin API (admins only: family list, access, storage use)
 - `src/versions.ts` new versions, history, restore (max 10 kept per file)
 - `src/cleanup.ts` nightly cron: purge old trash and abandoned uploads
 - `src/backup.ts` nightly copy to the backup bucket + database dump; `scripts/restore-db.mjs` rebuilds the database from a dump (`docs/RESTORE.md`)
 - `src/zip.ts` zip download request; `src/zipwriter.ts` the streaming ZIP writer (pure, unit-tested against Python's zip reader)
+- `bodyOf(req)` in `src/files.ts` is how every handler reads a JSON body (never call `req.json()` directly: a `null` body would crash)
 - `src/shares.ts` manage public links (signed in); `src/public.ts` the public `/s/<token>` pages (no sign-in, no scripts)
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan

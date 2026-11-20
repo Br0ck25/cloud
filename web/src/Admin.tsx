@@ -8,16 +8,23 @@ import { size } from "./format";
 export function Admin({ me, ask, backedUp }: { me: number; ask: (a: Ask) => void; backedUp: () => void }) {
   const [data, setData] = useState<{ users: Person[]; family_bytes: number; total_bytes: number; backup: Backup } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [handing, setHanding] = useState<Person | null>(null); // a removed person whose files are being handed over
+  const [target, setTarget] = useState("family");
+  const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const load = () => api.admin().then(setData, (e) => setError(e.message));
   useEffect(() => { load(); }, []);
   const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
   const runBackup = () => { setBusy(true); setError(""); api.backupNow().then(() => { load(); backedUp(); }, (e) => setError(e.message)).finally(() => setBusy(false)); };
+  const go = () => handing && api.handOver(handing.id, target === "family" ? "family" : Number(target)).then(
+    (r) => { setHanding(null); setMsg(r.folder ? `Moved ${r.moved} ${r.moved === 1 ? "item" : "items"} into "${r.folder}".` : "They have no files to hand over."); load(); },
+    (e) => setMsg(e.message));
   if (error) return <p class="error">{error}</p>;
   if (!data) return null;
   const b = data.backup;
   return (
     <>
+      {msg && !handing && <p class="notice" role="status" onClick={() => setMsg("")}>{msg}</p>}
       <div class="bar"><button class="btn primary" onClick={() => ask({ title: "Add a family member (email)", value: "", ok: (e) => act(api.addPerson(e)) })}>Add person</button></div>
       <ul class="list">
         <li><span class="main"><span class="tile">💾</span><span class="name">Total storage</span></span><span class="meta">{size(data.total_bytes)}</span></li>
@@ -47,6 +54,7 @@ export function Admin({ me, ask, backedUp }: { me: number; ask: (a: Ask) => void
               <details class="more"><summary aria-label="Actions">⋮</summary>
                 <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
                   {u.active ? <button onClick={() => act(api.editPerson(u.id, { active: false }))}>Remove access</button> : <button onClick={() => act(api.editPerson(u.id, { active: true }))}>Restore access</button>}
+                  {!u.active && u.bytes > 0 && <button onClick={() => { setMsg(""); setTarget(String(me)); setHanding(u); }}>Hand over files…</button>}
                   {u.active ? <button onClick={() => act(api.editPerson(u.id, { role: u.role === "admin" ? "member" : "admin" }))}>{u.role === "admin" ? "Make member" : "Make admin"}</button> : null}
                 </div>
               </details>
@@ -54,6 +62,20 @@ export function Admin({ me, ask, backedUp }: { me: number; ask: (a: Ask) => void
           </li>
         ))}
       </ul>
+      {handing && (
+        <div class="modal" onClick={() => setHanding(null)}>
+          <div class="sheet" onClick={(e) => e.stopPropagation()}>
+            <h2>Hand over files</h2>
+            <p class="meta wrap">Everything {handing.email} owns ({size(handing.bytes)}) goes into a new folder called "Files from {handing.email}".</p>
+            <select aria-label="Hand over to" value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
+              {data.users.filter((u) => u.active).map((u) => <option key={u.id} value={String(u.id)}>{u.id === me ? "Me" : u.email}</option>)}
+              <option value="family">The Family folder (everyone)</option>
+            </select>
+            {msg && <p class="error meta wrap">{msg}</p>}
+            <div class="row"><button class="btn" onClick={() => setHanding(null)}>Cancel</button><button class="btn primary" onClick={go}>Hand over</button></div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

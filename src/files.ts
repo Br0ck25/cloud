@@ -12,6 +12,12 @@ const COLS = "id, parent_id, name, kind, size, mime, updated_at, taken_at, owner
 // Only types a browser cannot run code from may open inline; everything else downloads.
 const INLINE = /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/;
 
+/** The JSON body of a request as an object; anything else (missing, `null`, a list, text) counts as an empty object, so handlers answer 400 instead of crashing. */
+export const bodyOf = async <T>(req: Request): Promise<T> => {
+  const b = await req.json().catch(() => null);
+  return (b && typeof b === "object" && !Array.isArray(b) ? b : {}) as T;
+};
+
 export const err = (status: number, error: string) => Response.json({ error }, { status });
 export const cleanName = (n: unknown) => (typeof n === "string" && /^[^/\0]{1,255}$/.test(n.trim()) && !/^\.\.?$/.test(n.trim()) ? n.trim() : null);
 
@@ -83,7 +89,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
   const id = m?.[1] ? Number(m[1]) : null;
 
   if (pathname === "/api/folders" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { parent?: number; name?: string };
+    const body = await bodyOf<{ parent?: number; name?: string }>(req);
     const name = cleanName(body.name);
     if (!name) return err(400, "invalid name");
     const p = await parentOf(env, user, body.parent);
@@ -100,11 +106,13 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
     return Response.json({ items: results });
   }
 
-  // Delete forever: only items at the top of the trash (not those inside a trashed folder), at most 100 per call. Without "ids" it means everything in the trash.
+  // Delete forever: only items at the top of the trash (not those inside a trashed folder), at most 100 per call.
+  // The body must say what to delete: {"ids": [...]} or {"all": true}. An empty or garbled body deletes nothing.
   if (pathname === "/api/trash/purge" && req.method === "POST") {
-    const b = (await req.json().catch(() => ({}))) as { ids?: unknown };
-    if ("ids" in b && (!Array.isArray(b.ids) || !b.ids.every(Number.isInteger))) return err(400, "ids must be a list of numbers");
-    const ids = "ids" in b ? (b.ids as number[]).slice(0, 100) : null;
+    const b = await bodyOf<{ ids?: unknown; all?: unknown }>(req);
+    if (!Array.isArray(b.ids) && b.all !== true) return err(400, 'send {"ids": [...]} or {"all": true}');
+    if (Array.isArray(b.ids) && !b.ids.every(Number.isInteger)) return err(400, "ids must be a list of numbers");
+    const ids = Array.isArray(b.ids) ? (b.ids as number[]).slice(0, 100) : null;
     const top = "trashed_at is not null and (owner_id = ? or owner_id is null) and (parent_id is null or exists (select 1 from nodes p where p.id = nodes.parent_id and p.trashed_at is null))";
     const pick = ids ? `and id in (${ids.map(() => "?").join(",")})` : "";
     const { results } = ids && !ids.length ? { results: [] } : await env.DB.prepare(`select id from nodes where ${top} ${pick} order by trashed_at limit 100`).bind(user.id, ...(ids ?? [])).all<{ id: number }>();
@@ -216,7 +224,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
   }
 
   if (req.method === "PATCH") {
-    const body = (await req.json().catch(() => ({}))) as { name?: string; parent?: number | null };
+    const body = await bodyOf<{ name?: string; parent?: number | null }>(req);
     const name = "name" in body ? cleanName(body.name) : node.name;
     if (!name) return err(400, "invalid name");
     let parentId = node.parent_id;

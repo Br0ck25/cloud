@@ -23,11 +23,12 @@ export type Backup = { ran_at: number | null; files: number; bytes: number; wait
 export const admin = () => call<{ users: Person[]; family_bytes: number; total_bytes: number; backup: Backup }>("/api/admin");
 export const backupNow = () => call<Backup>("/api/admin/backup", send("POST"));
 export const addPerson = (email: string) => call("/api/admin/users", send("POST", { email }));
+export const handOver = (id: number, to: number | "family") => call<{ moved: number; folder: string | null }>(`/api/admin/users/${id}/transfer`, send("POST", { to }));
 export const editPerson = (id: number, patch: { role?: string; active?: boolean }) => call(`/api/admin/users/${id}`, send("PATCH", patch));
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
 export const search = (q: string) => call<{ items: Item[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.items);
 export const photos = (before?: string) => call<{ items: Item[]; next: string | null }>(`/api/photos${before ? `?before=${before}` : ""}`);
-export const purge = (ids?: number[]) => call<{ purged: number; remaining: number }>("/api/trash/purge", send("POST", ids ? { ids } : {}));
+export const purge = (ids?: number[]) => call<{ purged: number; remaining: number }>("/api/trash/purge", send("POST", ids ? { ids } : { all: true }));
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call<Item>("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));

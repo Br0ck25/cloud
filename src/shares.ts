@@ -1,5 +1,5 @@
 import type { User } from "./auth";
-import { err, getNode } from "./files";
+import { err, getNode, bodyOf } from "./files";
 
 const newToken = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); // 128 random bits
 
@@ -27,7 +27,7 @@ export async function handleShares(req: Request, env: Env, user: User, url: URL)
   }
 
   if (!m[1] && req.method === "POST") {
-    const b = (await req.json().catch(() => ({}))) as { node?: number; days?: number | null };
+    const b = await bodyOf<{ node?: number; days?: number | null }>(req);
     const node = await getNode(env, user, b.node);
     if (!node || node.trashed_at) return err(404, "not found");
     if (b.days != null && !(Number.isInteger(b.days) && b.days >= 1 && b.days <= 365)) return err(400, "days must be 1 to 365, or null for no expiry");

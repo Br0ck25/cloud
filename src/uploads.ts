@@ -1,5 +1,5 @@
 import type { User } from "./auth";
-import { err, cleanName, insertFile, item, parentOf, takenParam } from "./files";
+import { err, cleanName, insertFile, item, parentOf, takenParam, bodyOf } from "./files";
 
 // R2 needs every part except the last to be the same size (and at least 5 MiB), so the server fixes the size.
 const PART_SIZE = 8 * 1024 * 1024;
@@ -22,7 +22,7 @@ export async function handleUploads(req: Request, env: Env, user: User, url: URL
 
   if (!id) {
     if (req.method !== "POST") return undefined;
-    const b = (await req.json().catch(() => ({}))) as { name?: string; parent?: number; size?: number; mime?: string; taken?: number };
+    const b = await bodyOf<{ name?: string; parent?: number; size?: number; mime?: string; taken?: number }>(req);
     const name = cleanName(b.name);
     const size = b.size;
     if (!name) return err(400, "invalid name");

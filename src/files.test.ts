@@ -712,7 +712,7 @@ test("photos: the date taken also travels with large (multipart) uploads", async
 });
 
 // ---- delete forever ----
-const purge = (f: typeof mom, body?: object) => f("/api/trash/purge", { method: "POST", body: JSON.stringify(body ?? {}) });
+const purge = (f: typeof mom, body: object = { all: true }) => f("/api/trash/purge", { method: "POST", body: JSON.stringify(body) });
 const trashIds = async (f: typeof mom) => (await json(await f("/api/trash"))).items.map((i: any) => i.id) as number[];
 
 test("delete forever: chosen items go for good with their files, versions and links; everything else stays", async () => {
@@ -728,6 +728,9 @@ test("delete forever: chosen items go for good with their files, versions and li
   for (const id of [doomed.id, folder.id, keeper.id]) assert.equal((await mom(`/api/files/${id}`, { method: "DELETE" })).status, 204);
 
   assert.equal((await purge(mom, { ids: "all" })).status, 400);
+  assert.equal((await purge(mom, {})).status, 400, "no list and no explicit all: nothing is deleted");
+  assert.equal((await mom("/api/trash/purge", { method: "POST", body: "{broken" })).status, 400, "a garbled body deletes nothing");
+  assert.ok((await trashIds(mom)).includes(keeper.id), "still all there");
   assert.equal((await purge(mom, { ids: [1.5] })).status, 400);
   assert.deepEqual(await json(await purge(mom, { ids: [] })), { purged: 0, remaining: (await trashIds(mom)).length }, "an empty list deletes nothing");
   assert.ok(await trashIds(mom).then((t) => t.includes(keeper.id)));
@@ -856,4 +859,97 @@ test("share links overview: every link on items you can see, who made it, and no
   const his = (await json(await dad("/api/shares/all"))).items.map((l: any) => l.id);
   assert.ok(his.includes(d.id) && his.includes(e.id) && !his.includes(a.id) && !his.includes(b.id), "dad sees his links and Family's, not mom's private ones");
   assert.equal((await mom("/api/shares/all", { method: "POST" })).status, 404);
+});
+
+// ---- hand over a removed person's files ----
+test("hand over: a removed person's whole tree moves to someone else, intact, in one folder", async () => {
+  const add = async (email: string) => json(await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email }) }));
+  const leaver = await add("leaver@example.com");
+  const who = as("leaver@example.com");
+  const trip = await mkdir(who, "Trip");
+  const deep = await mkdir(who, "Deep", trip.id);
+  const a = pattern(500, 1), b = pattern(900, 2), c = pattern(300, 3);
+  await putFile(who, "a.png", a, trip.id);
+  await putFile(who, "b.png", b, deep.id);
+  const top = await putFile(who, "report.png", c); // mom has a top-level report.png too
+  await putFile(mom, "report.png", pattern(5));
+  await newVersion(who, top.id, pattern(77)); // history comes along
+  const link = await makeShare(who, top.id);
+
+  const go = (id: number, body: object, f = mom) => f(`/api/admin/users/${id}/transfer`, { method: "POST", body: JSON.stringify(body) });
+  const momRow = async () => (await json(await mom("/api/admin"))).users.find((u: any) => u.email === "mom@example.com");
+  const leaverRow = async () => (await json(await mom("/api/admin"))).users.find((u: any) => u.id === leaver.id);
+  const owed = (await leaverRow()).bytes;
+  assert.ok(owed > 0);
+
+  assert.equal((await go(leaver.id, { to: 1 })).status, 400, "not while they still have access");
+  await mom(`/api/admin/users/${leaver.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) });
+  const mine = (await momRow());
+  assert.equal((await go(leaver.id, {}, dad)).status, 403, "admins only");
+  assert.equal((await go(leaver.id, { to: leaver.id })).status, 400, "not to themselves");
+  assert.equal((await go(leaver.id, { to: 999999 })).status, 404);
+  assert.equal((await go(leaver.id, { to: "everyone" })).status, 400);
+  assert.equal((await go(leaver.id, null as any)).status, 400);
+  assert.equal((await go(999999, { to: mine.id })).status, 404);
+
+  const r = await json(await go(leaver.id, { to: mine.id }));
+  assert.equal(r.folder, "Files from leaver@example.com");
+  assert.equal(r.moved, 5, "Trip, Deep, a, b and report");
+
+  assert.ok((await names(mom)).includes("Files from leaver@example.com"), "the folder is at the top of mom's files");
+  assert.equal((await names(mom)).filter((n: string) => n === "report.png").length, 1, "her own report.png is untouched");
+  const box = (await json(await mom("/api/files"))).items.find((i: any) => i.name === r.folder);
+  assert.deepEqual((await names(mom, box.id)).sort(), ["Trip", "report.png"], "their top level sits inside it, name clash and all");
+  const trip2 = (await json(await mom(`/api/files?parent=${box.id}`))).items.find((i: any) => i.name === "Trip");
+  const deep2 = (await json(await mom(`/api/files?parent=${trip2.id}`))).items.find((i: any) => i.name === "Deep");
+  assert.deepEqual(await names(mom, trip2.id), ["Deep", "a.png"]);
+  const bFile = (await json(await mom(`/api/files?parent=${deep2.id}`))).items[0];
+  assert.deepEqual(await bytesOf(mom, bFile.id), b, "contents are identical");
+  assert.equal((await dad(`/api/files/${bFile.id}`)).status, 404, "and now private to mom, not Family's");
+  assert.equal((await versionsOf(mom, box ? (await json(await mom(`/api/files?parent=${box.id}`))).items.find((i: any) => i.name === "report.png").id : 0)).items.length, 1, "version history came along");
+
+  assert.equal((await leaverRow()).bytes, 0, "nothing left on their account");
+  assert.ok((await momRow()).bytes >= mine.bytes + owed, "mom's storage grew by what they had");
+  assert.equal((await pub(`/s/${link.token}`)).status, 200, "their share link still works");
+  assert.deepEqual(await json(await go(leaver.id, { to: mine.id })), { moved: 0, folder: null }, "a second hand-over finds nothing");
+});
+
+test("hand over: to the Family folder, with a numbered folder when the name is taken", async () => {
+  const joined = await json(await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "second@example.com" }) }));
+  const who = as("second@example.com");
+  const kept = await putFile(who, "keepsake.png", pattern(40, 7));
+  await mom(`/api/admin/users/${joined.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) });
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  await mkdir(mom, "Files from second@example.com", family.id); // the name is already taken inside Family
+  const go = (to: any) => mom(`/api/admin/users/${joined.id}/transfer`, { method: "POST", body: JSON.stringify({ to }) });
+  const inactive = await json(await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "gone@example.com" }) }));
+  await mom(`/api/admin/users/${inactive.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) });
+  assert.equal((await go(inactive.id)).status, 400, "not to someone who has no access");
+
+  const r = await json(await go("family"));
+  assert.equal(r.folder, "Files from second@example.com (1)");
+  assert.ok((await names(dad, family.id)).includes("Files from second@example.com (1)"), "everyone in the family sees it");
+  const box = (await json(await dad(`/api/files?parent=${family.id}`))).items.find((i: any) => i.name === r.folder);
+  const moved = (await json(await dad(`/api/files?parent=${box.id}`))).items[0];
+  assert.equal(moved.name, "keepsake.png");
+  assert.equal(moved.shared, 1);
+  assert.deepEqual(await bytesOf(dad, moved.id), pattern(40, 7), "dad can read it");
+  assert.ok(kept.id);
+});
+
+// ---- odd request bodies ----
+test("bodies that are not JSON objects are refused with a 4xx, never a crash", async () => {
+  const some = await putFile(mom, "odd-bodies.png", pattern(5));
+  const aRow = (await json(await mom("/api/admin"))).users.find((u: any) => u.email === "dad@example.com");
+  const calls: [string, string][] = [
+    ["POST", "/api/folders"], ["PATCH", `/api/files/${some.id}`], ["POST", "/api/shares"], ["POST", "/api/uploads"], ["POST", "/api/trash/purge"],
+    ["POST", "/api/admin/users"], ["PATCH", `/api/admin/users/${aRow.id}`], ["POST", `/api/admin/users/${aRow.id}/transfer`],
+  ];
+  for (const [method, path] of calls) {
+    for (const body of ["null", "[]", '"text"', "5", "{not json", ""]) {
+      const r = await mom(path, { method, body });
+      assert.ok(r.status >= 400 && r.status < 500 || r.status === 200 || r.status === 201 || r.status === 204, `${method} ${path} with body ${JSON.stringify(body)} answered ${r.status}`);
+      assert.notEqual(r.status, 500, `${method} ${path} crashed on body ${JSON.stringify(body)}`);
+    }
+  }
 });
