@@ -36,7 +36,7 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
 
 ## Milestones (each ends with a runnable check)
 1. **Skeleton** (done). `npm run dev`, `curl /api/health`.
-2. **Schema + auth**: migration 0001, Access JWT middleware, `GET /api/me`, auto-create user row on first login. Check: no JWT → 401; valid → email returned. Also confirm the PWA/Access login behavior above.
+2. **Users + auth** (done, untested against real Cloudflare): `migrations/0001_users.sql`, Access JWT check in `src/auth.ts`, `GET /api/me`, CI deploy workflow. Only `ADMIN_EMAIL` is auto-created; everyone else must be added by an admin. Still to confirm after first deploy: the PWA keeps its Access session on iOS/Android.
 3. **Files API**: create folder, single-PUT upload, list, download with Range, rename, move, trash/restore. Check: scripted curl round-trip, byte-for-byte compare.
 4. **Web UI + PWA shell**: file browser, drag-drop and picker upload, image/pdf/video preview, manifest, service worker. Check: Playwright smoke test; Lighthouse installable.
 5. **Large uploads**: multipart with progress and resume. Check: 500 MB file round-trips.
@@ -54,7 +54,7 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
 
 ## Deploy (nothing run from your computer)
 - GitHub Actions: on push to `main`, `wrangler d1 migrations apply` then `wrangler deploy`. Pull requests run typecheck only.
-- Needs two GitHub repo secrets: `CLOUDFLARE_API_TOKEN` (Workers, D1, R2 edit) and `CLOUDFLARE_ACCOUNT_ID`.
-- Remove the placeholder D1 id and let Wrangler auto-provision D1/R2 on first deploy (to verify in milestone 2; fallback is a one-time `workflow_dispatch` job that creates them).
+- Needs three GitHub repo secrets: `CLOUDFLARE_API_TOKEN` (Workers, D1, R2 edit) and `CLOUDFLARE_ACCOUNT_ID`, plus `ADMIN_EMAIL` (the first admin's email, kept out of the repo).
+- CI creates the D1 database and R2 bucket if missing and substitutes the real D1 id for `REPLACE_DB_ID` before migrating and deploying (nothing secret is committed).
 - Custom domain `cloud.brocksville.com` via `routes` with `custom_domain: true` in `wrangler.jsonc` (requires `brocksville.com` on Cloudflare DNS).
 - One-time dashboard clicks (no CLI): create the API token, create the Access application for `cloud.brocksville.com` with a bypass for `/s/*`, set the billing alert.

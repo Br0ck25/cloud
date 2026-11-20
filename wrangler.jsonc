@@ -2,6 +2,13 @@
   "name": "cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
+  "routes": [{ "pattern": "cloud.brocksville.com", "custom_domain": true }],
+  "vars": {
+    "TEAM_DOMAIN": "brock-family.cloudflareaccess.com",
+    "ACCESS_AUD": "c4562c82f7d6ab16855c840cfcef9f1e3ce08f5342584d6c8cdb43d95353a550",
+    "ADMIN_EMAIL": "",
+    "DEV_EMAIL": ""
+  },
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "cloud-files" }],
-  "d1_databases": [{ "binding": "DB", "database_name": "cloud", "database_id": "REPLACE_AFTER_d1_create" }]
+  "d1_databases": [{ "binding": "DB", "database_name": "cloud", "database_id": "REPLACE_DB_ID", "migrations_dir": "migrations" }]
 }
