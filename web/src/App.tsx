@@ -4,13 +4,15 @@ import type { Item } from "./api";
 import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
 import { ShareSheet } from "./ShareSheet";
+import { clearInbox, readInbox } from "./inbox";
 
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const size = (n: number | null) => (n == null ? "" : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(1)} GB`);
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
-type Upload = { name: string; pct: number; file: File; error?: string };
+type Upload = { name: string; pct: number; file: File; dest?: number; error?: string };
+const folderOf = (hash: string) => { const m = /^#\/f\/(\d+)$/.exec(hash); return m ? Number(m[1]) : undefined; };
 type Ask = { title: string; value: string; ok: (v: string) => void };
 
 function AskSheet({ ask, close }: { ask: Ask; close: () => void }) {
@@ -43,8 +45,7 @@ function useHash() {
 export function App() {
   const hash = useHash();
   const inTrash = hash === "#/trash";
-  const folder = /^#\/f\/(\d+)$/.exec(hash)?.[1];
-  const folderId = folder ? Number(folder) : undefined;
+  const folderId = folderOf(hash);
 
   const [email, setEmail] = useState("");
   const [parent, setParent] = useState<Item | null>(null);
@@ -56,23 +57,33 @@ export function App() {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [moving, setMoving] = useState<Item | null>(null);
   const [sharing, setSharing] = useState<Item | null>(null);
+  const [inbox, setInbox] = useState<File[] | null>(null); // files shared into the app from the phone's Share sheet
+  const saving = useRef(false);
 
-  const load = () =>
-    (inTrash ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderId))
-      .then((r) => { setParent(r.parent); setItems(r.items); setError(""); })
-      .catch((e) => setError(e.message));
+  const latest = useRef(0);
+  // Reads the address at call time and ignores out-of-date answers, so a load that finishes after you moved elsewhere cannot overwrite the screen.
+  const load = () => {
+    const n = ++latest.current;
+    const h = location.hash;
+    return (h === "#/trash" ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderOf(h)))
+      .then((r) => { if (n === latest.current) { setParent(r.parent); setItems(r.items); setError(""); } })
+      .catch((e) => { if (n === latest.current) setError(e.message); });
+  };
   useEffect(() => { load(); }, [hash]);
+  useEffect(() => {
+    if (hash === "#/share") readInbox().then((f) => (f.length ? setInbox(f) : (location.hash = "#/")), () => (location.hash = "#/"));
+  }, [hash]);
   useEffect(() => { api.me().then((m) => setEmail(m.email), () => {}); }, []);
 
   const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
 
-  async function addFiles(files: File[]) {
+  async function addFiles(files: File[], dest = folderId) {
     const awake = await navigator.wakeLock?.request("screen").catch(() => null); // keeps a phone from suspending the upload
     for (const f of files) {
       const set = (u: Partial<Upload>) => setUploads((all) => all.map((x) => (x.name === f.name ? { ...x, ...u } : x)));
-      setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0, file: f }]);
+      setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0, file: f, dest }]);
       try {
-        const saved = await api.upload(f, folderId, (p) => set({ pct: p }));
+        const saved = await api.upload(f, dest, (p) => set({ pct: p }));
         setUploads((all) => all.filter((x) => x.name !== f.name));
         await load();
         const jpeg = await makeThumb(f);
@@ -91,7 +102,10 @@ export function App() {
       onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
       <header>
         <h1>{inTrash ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : parent ? parent.name : "Family Cloud"}</h1>
-        <span class="who">{email}</span>
+        <details class="account">
+          <summary class="who">{email || "Account"}</summary>
+          <div class="menu"><a href="/cdn-cgi/access/logout">Sign out</a></div>
+        </details>
       </header>
 
       {!inTrash && (
@@ -106,7 +120,7 @@ export function App() {
       {uploads.map((u) => (
         <div class="upload" key={u.name}>
           <span>{u.name}</span>
-          {u.error ? <><span class="error">{u.error}</span><button class="btn" onClick={() => addFiles([u.file])}>Retry</button><button class="btn" aria-label="Dismiss" onClick={() => setUploads((all) => all.filter((x) => x !== u))}>✕</button></>
+          {u.error ? <><span class="error">{u.error}</span><button class="btn" onClick={() => addFiles([u.file], u.dest)}>Retry</button><button class="btn" aria-label="Dismiss" onClick={() => setUploads((all) => all.filter((x) => x !== u))}>✕</button></>
             : <><progress value={u.pct} max={1} /><span class="meta">{Math.floor(u.pct * 100)}%</span></>}
         </div>
       ))}
@@ -142,6 +156,9 @@ export function App() {
 
       {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}
         ok={(to) => act(api.move(moving.id, to ?? null))} close={() => setMoving(null)} />}
+      {inbox && <Picker title={`Save ${inbox.length} shared ${inbox.length === 1 ? "file" : "files"}`} action="Save here"
+        ok={(to) => { saving.current = true; location.hash = to ? `#/f/${to}` : "#/"; addFiles(inbox, to).then(clearInbox); }}
+        close={() => { setInbox(null); if (!saving.current) { clearInbox(); if (location.hash === "#/share") location.hash = "#/"; } saving.current = false; }} />}
       {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 
