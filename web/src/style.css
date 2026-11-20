@@ -69,7 +69,9 @@ progress { width: 40%; accent-color: var(--brand); }
 .stack { display: grid; min-width: 0; }
 .sheet .list .btn { min-height: 36px; padding: 0 12px; }
 .wrap { white-space: normal; margin: 0; }
-.sheet select { font: inherit; flex: 1; min-height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
+.tools { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+.tools .spacer { flex: 1; }
+.tools .sort, .sheet select { font: inherit; flex: 1; min-height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
 .crumb { display: flex; align-items: center; gap: 10px; }
 .btn:disabled { opacity: .45; cursor: default; }
 .row { display: flex; gap: 8px; justify-content: flex-end; }

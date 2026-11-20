@@ -22,6 +22,16 @@ import { size } from "./format";
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const isMedia = (i: Item) => /^(image\/(?!svg)|video\/)/.test(i.mime ?? "");
+type Sort = "name" | "new" | "old" | "big";
+const SORTS: [Sort, string][] = [["name", "Name"], ["new", "Newest first"], ["old", "Oldest first"], ["big", "Largest first"]];
+const byName = (a: Item, b: Item) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }); // IMG_2 before IMG_10
+const taken = (i: Item) => i.taken_at ?? i.updated_at;
+/** Folders first (by name), then files in the chosen order. */
+const sorted = (items: Item[], by: Sort) => [...items].sort((a, b) => {
+  if ((a.kind === "folder") !== (b.kind === "folder")) return a.kind === "folder" ? -1 : 1;
+  if (a.kind === "folder" || by === "name") return byName(a, b);
+  return (by === "new" ? taken(b) - taken(a) : by === "old" ? taken(a) - taken(b) : (b.size ?? 0) - (a.size ?? 0)) || byName(a, b);
+});
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
 type Upload = { name: string; pct: number; file: File; dest?: number; error?: string };
@@ -68,6 +78,8 @@ export function App() {
   const [tick, setTick] = useState(0); // bumped after changes so open search results refresh
   const [view, setView] = useState<"grid" | "list" | null>(() => { try { const v = localStorage.getItem("view"); return v === "grid" || v === "list" ? v : null; } catch { return null; } }); // null = automatic
   const chooseView = (v: "grid" | "list") => { setView(v); try { localStorage.setItem("view", v); } catch {} };
+  const [sort, setSort] = useState<Sort>(() => { try { const v = localStorage.getItem("sort"); return SORTS.some(([k]) => k === v) ? (v as Sort) : "name"; } catch { return "name"; } });
+  const chooseSort = (v: Sort) => { setSort(v); try { localStorage.setItem("sort", v); } catch {} };
 
   const latest = useRef(0);
   // Reads the address at call time and ignores out-of-date answers, so a load that finishes after you moved elsewhere cannot overwrite the screen.
@@ -110,7 +122,7 @@ export function App() {
     awake?.release();
   }
 
-  const rows = found ?? items;
+  const rows = found ?? (inTrash ? items : sorted(items, sort)); // search keeps the server's order; the trash is newest-deleted first
   const files = rows.filter((i) => i.kind === "file");
   // Automatic: a folder that is mostly photos and videos opens as a grid; the toggle next to the search box overrides it (and is remembered on this device).
   const grid = !inTrash && !inAdmin && !inPhotos && !found && (view ? view === "grid" : files.length > 0 && files.filter(isMedia).length >= files.length * 0.6);
@@ -190,11 +202,19 @@ export function App() {
       )}
 
       {!inTrash && !inAdmin && !inPhotos && !sel && (
-        <div class="searchrow">
-          <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
-          {rows.length > 0 && <button class="btn" onClick={() => selection.start()}>Select</button>}
-          {!found && <button class="btn sq" aria-label={grid ? "Show as a list" : "Show as a grid of pictures"} onClick={() => chooseView(grid ? "list" : "grid")}>{grid ? "☰" : "▦"}</button>}
-        </div>
+        <>
+          <div class="searchrow">
+            <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+          </div>
+          {!found && rows.length > 0 && (
+            <div class="tools">
+              <select class="sort" aria-label="Sort by" value={sort} onChange={(e) => chooseSort(e.currentTarget.value as Sort)}>{SORTS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}</select>
+              <button class="btn sq" aria-label={grid ? "Show as a list" : "Show as a grid of pictures"} onClick={() => chooseView(grid ? "list" : "grid")}>{grid ? "☰" : "▦"}</button>
+              <button class="btn" onClick={() => selection.start()}>Select</button>
+            </div>
+          )}
+          {found && rows.length > 0 && <div class="tools"><span class="spacer" /><button class="btn" onClick={() => selection.start()}>Select</button></div>}
+        </>
       )}
 
       {note && <p class="notice" role="status" onClick={() => setNote("")}>{note}</p>}

@@ -152,7 +152,7 @@ try {
     await upload(p, file("a.png"), file("b.png", 1), file("c.png", 2));
     for (const n of ["a.png", "b.png", "c.png"]) await p.waitForSelector(`li:has-text("${n}") .tile img`);
 
-    await p.click('.searchrow >> text=Select');
+    await p.click('.tools >> text=Select');
     await p.click('.check[aria-label="Select a.png"]');
     await p.click('.check[aria-label="Select b.png"]');
     check((await p.textContent(".selbar")).includes("2 selected"), "count says 2 selected");
@@ -167,11 +167,11 @@ try {
     check((await p.locator("li:has-text('a.png'), li:has-text('b.png')").count()) === 2, "both arrived in Trips");
 
     await p.goto(U + "/#/"); await p.waitForSelector('li:has-text("c.png")');
-    await p.click('.searchrow >> text=Select');
+    await p.click('.tools >> text=Select');
     await p.click("text=All");
     check(/\d+ selected/.test(await p.textContent(".selbar")) && !(await p.locator('.check[aria-label="Select Family"]').isEnabled()), "All ticks everything, but the shared Family folder cannot be picked");
     await p.click('.selbar >> text=✕');
-    await p.click('.searchrow >> text=Select');
+    await p.click('.tools >> text=Select');
     await p.click('.check[aria-label="Select c.png"]');
     await p.click('.selbar >> text=Delete');
     await p.waitForSelector('li:has-text("c.png")', { state: "detached" });
@@ -294,7 +294,7 @@ try {
     check(r1.bad === null && r1.names.sort().join() === "ZipMe/,ZipMe/Inner/,ZipMe/Inner/b.bin,ZipMe/a.txt", "folder tree: " + r1.names);
     check(r1.sha["ZipMe/Inner/b.bin"] === sha(bytes.b) && r1.sha["ZipMe/a.txt"] === sha(bytes.a), "contents are identical");
 
-    await p.click(".searchrow >> text=Select");
+    await p.click(".tools >> text=Select");
     await p.click('.check[aria-label="Select ZipMe"]');
     await p.click('.check[aria-label="Select ZipToo"]');
     const z2 = await grab(() => p.click(".selbar >> text=Download"));
@@ -303,7 +303,7 @@ try {
     check(r2.bad === null && r2.names.includes("ZipToo/c.txt") && r2.names.includes("ZipMe/Inner/b.bin"), "both trees are in it: " + r2.names);
     await p.click(".selbar >> text=✕");
 
-    await p.click(".searchrow >> text=Select");
+    await p.click(".tools >> text=Select");
     await p.click('.check[aria-label="Select lonely.txt"]');
     const z3 = await grab(() => p.click(".selbar >> text=Download"));
     check(z3.name === "lonely.txt" && z3.bytes.toString() === "just me", "one file downloads as itself, not a zip: " + z3.name);
@@ -326,6 +326,33 @@ try {
     await p.waitForFunction(() => !document.querySelector(".end")?.textContent, null, { timeout: 15000 });
     const months = await p.locator(".month").allTextContents();
     check(months.includes("July 2019") && months.includes("December 2021"), "the timeline groups them under their real months: " + months.join(", "));
+  });
+
+  await step("sorting: name (numbers in order), newest, oldest, largest; folders stay first; the choice is remembered", async () => {
+    const p = await newPage();
+    const api = async (method, path, data) => (await p.request.fetch(U + path, { method, data, headers: { "content-type": "application/octet-stream" } })).json().catch(() => ({}));
+    const box = (await p.request.post(U + "/api/folders", { data: { name: "SortBox" } }).then((r) => r.json())).id;
+    await p.request.post(U + "/api/folders", { data: { name: "zzz-folder", parent: box } });
+    const put = (name, size, taken) => api("PUT", `/api/files?name=${name}&parent=${box}&taken=${taken}`, Buffer.alloc(size, 1));
+    await put("sort-a.bin", 10, 1_500_000_000); await put("sort-b.bin", 300, 1_600_000_000); await put("sort-c.bin", 50, 1_700_000_000);
+    await put("img10.bin", 5, 1_400_000_000); await put("img2.bin", 6, 1_400_000_100);
+    await home(p);
+    await p.click('a.main:has-text("SortBox")');
+    await p.waitForSelector('h1:has-text("SortBox")');
+    const order = async () => (await p.locator("ul.list li .name").allTextContents()).map((n) => n.trim());
+    const choose = async (label) => { await p.selectOption('select[aria-label="Sort by"]', { label }); await p.waitForTimeout(150); };
+    const files = (names) => names.filter((n) => n !== "zzz-folder");
+    check((await order())[0] === "zzz-folder", "folders come first");
+    check(files(await order()).join() === "img2.bin,img10.bin,sort-a.bin,sort-b.bin,sort-c.bin", "name order treats numbers as numbers: " + (await order()));
+    await choose("Newest first");
+    check((await order())[0] === "zzz-folder" && files(await order()).slice(0, 3).join() === "sort-c.bin,sort-b.bin,sort-a.bin", "newest first: " + (await order()));
+    await choose("Oldest first");
+    check(files(await order()).slice(0, 2).join() === "img10.bin,img2.bin", "oldest first: " + (await order()));
+    await choose("Largest first");
+    check(files(await order()).slice(0, 3).join() === "sort-b.bin,sort-c.bin,sort-a.bin" && (await order())[0] === "zzz-folder", "largest first: " + (await order()));
+    await p.reload();
+    await p.waitForSelector("ul.list li .name");
+    check(files(await order()).slice(0, 3).join() === "sort-b.bin,sort-c.bin,sort-a.bin", "the choice survives a reload: " + (await order()));
   });
 
   await step("no page broke the Content-Security-Policy", async () => { check(cspViolations.length === 0, cspViolations.join(" | ")); });
