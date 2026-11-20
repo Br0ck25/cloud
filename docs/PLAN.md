@@ -12,7 +12,7 @@
 | API | Worker, plain `fetch` router | one deployable; add Hono only if routing gets painful |
 | File bytes | R2 | cheap, no egress fees |
 | Metadata | D1 (SQLite) | relational, transactional |
-| Auth | Cloudflare Access (free up to 50 users), email one-time PIN or Google login; Worker validates the JWT | no password code; adding a family member = adding an email to the policy |
+| Auth | Cloudflare Access proves identity (Google or email PIN); Worker validates the JWT and checks the email against an allowlist in D1 | no password code; family list is managed in the app, not the dashboard |
 | Frontend | Vite + Preact/React, served by Workers static assets | same deploy, small bundle |
 | PWA | `manifest.webmanifest` + small service worker | installable, app-shell offline |
 | Search | D1 FTS5 on file names | enough for family-sized data |
@@ -40,11 +40,21 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
 3. **Files API**: create folder, single-PUT upload, list, download with Range, rename, move, trash/restore. Check: scripted curl round-trip, byte-for-byte compare.
 4. **Web UI + PWA shell**: file browser, drag-drop and picker upload, image/pdf/video preview, manifest, service worker. Check: Playwright smoke test; Lighthouse installable.
 5. **Large uploads**: multipart with progress and resume. Check: 500 MB file round-trips.
-6. **Sharing**: Family root, per-person shares, link shares with expiry, Share Target. Check: link works logged out; expired link 404s.
-7. **Search, versions, trash purge**: FTS5 name search, restore previous version, cron purge.
-8. **Deploy**: custom domain, Access policy for family emails, D1 time-travel backups, optional periodic R2 export to a second bucket.
+6. **Sharing**: Family root, per-person shares, link shares, Share Target. Check: link works logged out; expired/revoked link 404s.
+7. **Admin page + search + versions**: admin-only page (add/remove family emails, storage used, backup status), FTS5 name search, restore previous version, trash purge cron.
+8. **Backup + deploy hardening**: nightly copy to second bucket, billing alert, Access exemption for `/s/*` only. Check: delete a blob from primary, restore from backup.
 
-## Remaining questions (defaults in bold, I will proceed with these)
-- Login method: **Google login plus email one-time PIN** (family members without Google can still get in).
-- Per-user storage limits: **none**, just watch the R2 bill (first 10 GB free, then ~$0.015/GB-month).
-- Does anyone need iPhone support? **Yes assumed; hence the in-app picker rather than relying on Share Target.**
+## Decisions
+- **Backup**: nightly Cron copies new blobs (`blobs.backed_up_at is null`, batched per run) from `cloud-files` to `cloud-backup`. Same Cloudflare account, so this protects against bugs and bad deletes, not account loss. Deletes in primary do not delete from backup until a later manual prune.
+- **Uploads**: resumable R2 multipart with progress; on iPhone the app must stay open until done.
+- **Originals kept as-is**, HEIC included. No transcoding. Thumbnails are generated in the browser at upload; if the browser cannot decode a format (HEIC on non-Safari) show a generic icon and offer download.
+- **Link sharing**: download-only (no upload links in v1), 128-bit random token stored hashed, revocable from the share dialog, default expiry 7 days with "never" as an option. Only `/s/*` bypasses Access; the Worker serves nothing else unauthenticated.
+- **Admin**: first admin is set by an `ADMIN_EMAIL` var; admins add/remove emails and roles in an in-app page. Access is set to allow any authenticated identity and the Worker enforces the allowlist, so unknown emails get 403. Tradeoff: strangers can request a PIN email but get nothing.
+- **Cost guardrail**: storage total shown on the admin page; a Cloudflare billing alert is set once in the dashboard.
+
+## Deploy (nothing run from your computer)
+- GitHub Actions: on push to `main`, `wrangler d1 migrations apply` then `wrangler deploy`. Pull requests run typecheck only.
+- Needs two GitHub repo secrets: `CLOUDFLARE_API_TOKEN` (Workers, D1, R2 edit) and `CLOUDFLARE_ACCOUNT_ID`.
+- Remove the placeholder D1 id and let Wrangler auto-provision D1/R2 on first deploy (to verify in milestone 2; fallback is a one-time `workflow_dispatch` job that creates them).
+- Custom domain `cloud.brocksville.com` via `routes` with `custom_domain: true` in `wrangler.jsonc` (requires `brocksville.com` on Cloudflare DNS).
+- One-time dashboard clicks (no CLI): create the API token, create the Access application for `cloud.brocksville.com` with a bypass for `/s/*`, set the billing alert.
