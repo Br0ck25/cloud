@@ -32,6 +32,7 @@ export function Admin({ me, ask }: { me: number; ask: (a: Ask) => void }) {
                 {b.waiting - b.too_big > 0 ? ` · ${b.waiting - b.too_big} waiting` : ""}
                 {b.kept_after_delete ? ` · ${b.kept_after_delete} kept after deletion` : ""}
                 {b.too_big ? ` · ${b.too_big} too large to copy` : ""}
+                {b.repaired ? ` · ${b.repaired} re-copied after going missing` : ""}
               </span>
               {b.failed > 0 && <span class="error meta wrap">{b.failed} problems in the last run</span>}
             </span>

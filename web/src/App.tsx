@@ -36,7 +36,7 @@ export function App() {
   const inAdmin = hash === "#/admin";
   const folderId = folderOf(hash);
 
-  const [me, setMe] = useState<{ id: number; email: string; role: string } | null>(null);
+  const [me, setMe] = useState<{ id: number; email: string; role: string; backup_warning?: string | null } | null>(null);
   const [parent, setParent] = useState<Item | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [error, setError] = useState("");
@@ -112,6 +112,8 @@ export function App() {
           </div>
         </details>
       </header>
+
+      {me?.backup_warning && !inAdmin && <a class="notice" href="#/admin">⚠ {me.backup_warning} Open Admin to check the backup.</a>}
 
       {inAdmin && me && <Admin me={me.id} ask={setAsk} />}
 
