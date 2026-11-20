@@ -15,7 +15,9 @@ export type Share = { id: number; token: string; expires_at: number | null; crea
 export type Person = { id: number; email: string; role: "admin" | "member"; active: number; bytes: number };
 
 export const me = () => call<{ id: number; email: string; role: "admin" | "member" }>("/api/me");
-export const admin = () => call<{ users: Person[]; family_bytes: number; total_bytes: number }>("/api/admin");
+export type Backup = { ran_at: number | null; files: number; bytes: number; waiting: number; kept_after_delete: number; failed: number; too_big: number };
+export const admin = () => call<{ users: Person[]; family_bytes: number; total_bytes: number; backup: Backup }>("/api/admin");
+export const backupNow = () => call<Backup>("/api/admin/backup", send("POST"));
 export const addPerson = (email: string) => call("/api/admin/users", send("POST", { email }));
 export const editPerson = (id: number, patch: { role?: string; active?: boolean }) => call(`/api/admin/users/${id}`, send("PATCH", patch));
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
