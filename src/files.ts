@@ -11,8 +11,8 @@ const COLS = "id, parent_id, name, kind, size, mime, updated_at, owner_id is nul
 // Only types a browser cannot run code from may open inline; everything else downloads.
 const INLINE = /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/;
 
-const err = (status: number, error: string) => Response.json({ error }, { status });
-const cleanName = (n: unknown) => (typeof n === "string" && /^[^/\0]{1,255}$/.test(n.trim()) && !/^\.\.?$/.test(n.trim()) ? n.trim() : null);
+export const err = (status: number, error: string) => Response.json({ error }, { status });
+export const cleanName = (n: unknown) => (typeof n === "string" && /^[^/\0]{1,255}$/.test(n.trim()) && !/^\.\.?$/.test(n.trim()) ? n.trim() : null);
 
 /** A node the user may touch: their own or in the Family space. Null if missing or not theirs. */
 const getNode = (env: Env, user: User, id: unknown) =>
@@ -20,22 +20,25 @@ const getNode = (env: Env, user: User, id: unknown) =>
     ? env.DB.prepare("select * from nodes where id = ? and (owner_id is null or owner_id = ?)").bind(id, user.id).first<Node>()
     : Promise.resolve(null);
 
-const item = (env: Env, id: number) => env.DB.prepare(`select ${COLS} from nodes where id = ?`).bind(id).first();
+export const item = (env: Env, id: number) => env.DB.prepare(`select ${COLS} from nodes where id = ?`).bind(id).first();
 
 /** Resolves a parent folder id (null = the user's top level) to where a new node goes. */
-async function parentOf(env: Env, user: User, raw: unknown): Promise<{ id: number | null; owner: number | null } | Response> {
+export async function parentOf(env: Env, user: User, raw: unknown): Promise<{ id: number | null; owner: number | null } | Response> {
   if (raw == null || raw === "") return { id: null, owner: user.id };
   const p = await getNode(env, user, Number(raw));
   return p && p.kind === "folder" && !p.trashed_at ? { id: p.id, owner: p.owner_id } : err(404, "folder not found");
 }
 
 /** Runs a write; a duplicate name becomes a 409. */
-async function guarded<T>(fn: () => Promise<T>): Promise<T | Response> {
+export async function guarded<T>(fn: () => Promise<T>): Promise<T | Response> {
   try { return await fn(); } catch (e) {
     if (/UNIQUE/.test(String(e))) return err(409, "an item with that name already exists here");
     throw e;
   }
 }
+
+export const insertFile = (env: Env, p: { id: number | null; owner: number | null }, name: string, size: number, mime: string, key: string) =>
+  guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key) values (?, ?, ?, 'file', ?, ?, ?)").bind(p.id, p.owner, name, size, mime, key).run());
 
 const isFamilyRoot = (n: Node) => n.parent_id === null && n.owner_id === null;
 
@@ -87,7 +90,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
       const mime = req.headers.get("content-type") || "application/octet-stream";
       const key = `blobs/${crypto.randomUUID()}`;
       await env.FILES.put(key, req.body, { httpMetadata: { contentType: mime } });
-      const r = await guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key) values (?, ?, ?, 'file', ?, ?, ?)").bind(p.id, p.owner, name, size, mime, key).run());
+      const r = await insertFile(env, p, name, size, mime, key);
       if (r instanceof Response) { await env.FILES.delete(key); return r; }
       return Response.json(await item(env, r.meta.last_row_id), { status: 201 });
     }

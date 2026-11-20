@@ -3,13 +3,12 @@ import * as api from "./api";
 import type { Item } from "./api";
 import { makeThumb } from "./thumb";
 
-const MAX_UPLOAD = 100_000_000;
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const size = (n: number | null) => (n == null ? "" : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(1)} GB`);
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
-type Upload = { name: string; pct: number; error?: string };
+type Upload = { name: string; pct: number; file: File; error?: string };
 type Ask = { title: string; value: string; ok: (v: string) => void };
 
 function AskSheet({ ask, close }: { ask: Ask; close: () => void }) {
@@ -64,10 +63,10 @@ export function App() {
   const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
 
   async function addFiles(files: File[]) {
+    const awake = await navigator.wakeLock?.request("screen").catch(() => null); // keeps a phone from suspending the upload
     for (const f of files) {
       const set = (u: Partial<Upload>) => setUploads((all) => all.map((x) => (x.name === f.name ? { ...x, ...u } : x)));
-      setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0 }]);
-      if (f.size > MAX_UPLOAD) { set({ error: "Too large for now (100 MB limit)" }); continue; }
+      setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0, file: f }]);
       try {
         const saved = await api.upload(f, folderId, (p) => set({ pct: p }));
         setUploads((all) => all.filter((x) => x.name !== f.name));
@@ -76,6 +75,7 @@ export function App() {
         if (jpeg && (await api.putThumb(saved.id, jpeg)).ok) await load();
       } catch (e) { set({ error: (e as Error).message }); }
     }
+    awake?.release();
   }
 
   const back = parent ? (parent.parent_id ? `#/f/${parent.parent_id}` : "#/") : "#/";
@@ -101,7 +101,9 @@ export function App() {
       {error && <p class="error">{error} <button class="btn" onClick={() => load()}>Retry</button> <button class="btn" onClick={() => location.reload()}>Reload</button></p>}
       {uploads.map((u) => (
         <div class="upload" key={u.name}>
-          <span>{u.name}</span>{u.error ? <span class="error">{u.error}</span> : <progress value={u.pct} max={1} />}
+          <span>{u.name}</span>
+          {u.error ? <><span class="error">{u.error}</span><button class="btn" onClick={() => addFiles([u.file])}>Retry</button><button class="btn" aria-label="Dismiss" onClick={() => setUploads((all) => all.filter((x) => x !== u))}>✕</button></>
+            : <><progress value={u.pct} max={1} /><span class="meta">{Math.floor(u.pct * 100)}%</span></>}
         </div>
       ))}
 

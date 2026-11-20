@@ -146,3 +146,68 @@ test("thumbnails: store, serve, replace, and the rules around them", async () =>
   await mom(`/api/files/${f.id}`, { method: "DELETE" });
   assert.equal((await mom(`/api/files/${f.id}/thumb`)).status, 404); // trashed
 });
+
+// ---- large (multipart) uploads ----
+const MiB = 1024 * 1024;
+const pattern = (n: number) => { const a = new Uint8Array(n); for (let i = 0; i < n; i++) a[i] = (i * 31 + (i >> 8)) & 255; return a; };
+const startUpload = (f: typeof mom, body: object) => f("/api/uploads", { method: "POST", body: JSON.stringify(body) });
+const sendPart = (f: typeof mom, id: string, n: number, data: Uint8Array) => f(`/api/uploads/${id}/parts/${n}`, { method: "PUT", body: data });
+const finish = (f: typeof mom, id: string) => f(`/api/uploads/${id}/complete`, { method: "POST" });
+const bytesOf = async (f: typeof mom, id: number) => new Uint8Array(await (await f(`/api/files/${id}`)).arrayBuffer());
+
+test("large upload: parts sent out of order assemble into identical bytes", async () => {
+  const data = pattern(20 * MiB); // 8 + 8 + 4 MiB
+  const s = await json(await startUpload(mom, { name: "movie.bin", size: data.length }));
+  assert.equal(s.partSize, 8 * MiB);
+  assert.deepEqual(s.parts, []);
+  for (const n of [3, 1, 2]) assert.equal((await sendPart(mom, s.id, n, data.slice((n - 1) * 8 * MiB, n * 8 * MiB))).status, 204);
+  const done = await finish(mom, s.id);
+  assert.equal(done.status, 201);
+  const f = await json(done);
+  assert.equal(f.size, data.length);
+  assert.deepEqual(await bytesOf(mom, f.id), data);
+});
+
+test("large upload: starting again with the same file resumes and keeps finished parts", async () => {
+  const data = pattern(17 * MiB); // 8 + 8 + 1 MiB
+  const body = { name: "resume.bin", size: data.length };
+  const a = await json(await startUpload(mom, body));
+  await sendPart(mom, a.id, 1, data.slice(0, 8 * MiB));
+  await sendPart(mom, a.id, 2, data.slice(8 * MiB, 16 * MiB));
+  const b = await json(await startUpload(mom, body)); // e.g. after a reload or dropped connection
+  assert.equal(b.id, a.id);
+  assert.deepEqual(b.parts, [1, 2]);
+  assert.equal((await finish(mom, a.id)).status, 409); // part 3 still missing
+  await sendPart(mom, a.id, 2, data.slice(8 * MiB, 16 * MiB)); // re-sending a part is harmless
+  await sendPart(mom, a.id, 3, data.slice(16 * MiB));
+  const f = await json(await finish(mom, a.id));
+  assert.deepEqual(await bytesOf(mom, f.id), data);
+  assert.equal((await startUpload(mom, body)).status, 409); // name is now taken
+});
+
+test("large upload: size, ownership and destination rules", async () => {
+  const data = pattern(9 * MiB);
+  const s = await json(await startUpload(mom, { name: "rules.bin", size: data.length }));
+  assert.equal((await sendPart(mom, s.id, 1, data.slice(0, MiB))).status, 400); // part 1 must be exactly 8 MiB
+  assert.equal((await sendPart(mom, s.id, 2, data.slice(8 * MiB, 9 * MiB - 1))).status, 400); // last part must be the exact remainder
+  assert.equal((await sendPart(mom, s.id, 3, data.slice(0, MiB))).status, 400); // no part 3
+  assert.equal((await sendPart(mom, s.id, 0, data.slice(0, MiB))).status, 400);
+  assert.equal((await sendPart(dad, s.id, 1, data.slice(0, 8 * MiB))).status, 404); // dad cannot touch mom's upload
+  assert.equal((await finish(dad, s.id)).status, 404);
+  assert.equal((await mom("/api/uploads/not-a-real-id/complete", { method: "POST" })).status, 404);
+
+  assert.equal((await startUpload(mom, { name: "z.bin", size: 0 })).status, 400);
+  assert.equal((await startUpload(mom, { name: "z.bin", size: 51 * 1024 ** 3 })).status, 400);
+  assert.equal((await startUpload(mom, { name: "a/b", size: 10 })).status, 400);
+  const secret = await mkdir(mom, "PrivateForMom");
+  assert.equal((await startUpload(dad, { name: "x.bin", size: 10, parent: secret.id })).status, 404);
+
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const small = pattern(9 * MiB);
+  const fs = await json(await startUpload(dad, { name: "family.bin", size: small.length, parent: family.id }));
+  await sendPart(dad, fs.id, 1, small.slice(0, 8 * MiB));
+  await sendPart(dad, fs.id, 2, small.slice(8 * MiB));
+  const shared = await json(await finish(dad, fs.id));
+  assert.equal(shared.shared, 1);
+  assert.deepEqual(await bytesOf(mom, shared.id), small); // mom can read what dad put in Family
+});

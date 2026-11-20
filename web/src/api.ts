@@ -22,19 +22,44 @@ export const putThumb = (id: number, jpeg: Blob) => fetch(`/api/files/${id}/thum
 export const fileUrl = (id: number, download = false) => `/api/files/${id}${download ? "?download=1" : ""}`;
 
 /** XHR rather than fetch because fetch cannot report upload progress. */
-export function upload(file: File, parent: number | undefined, onProgress: (fraction: number) => void): Promise<Item> {
+function put<T>(url: string, body: Blob, type: string, onProgress: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open("PUT", `/api/files?name=${encodeURIComponent(file.name)}${parent ? `&parent=${parent}` : ""}`);
-    x.setRequestHeader("content-type", file.type || "application/octet-stream");
+    x.open("PUT", url);
+    x.setRequestHeader("content-type", type);
     x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     x.onload = () => {
-      if (x.status < 300) return resolve(JSON.parse(x.responseText));
+      if (x.status < 300) return resolve((x.responseText ? JSON.parse(x.responseText) : undefined) as T);
       let msg = `Upload failed (${x.status})`;
       try { msg = JSON.parse(x.responseText).error ?? msg; } catch {}
       reject(new Error(msg));
     };
     x.onerror = () => reject(new Error("Network error"));
-    x.send(file);
+    x.send(body);
   });
+}
+
+async function retry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
+  for (let i = 1; ; i++) {
+    try { return await fn(); } catch (e) {
+      if (i >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** (i - 1)));
+    }
+  }
+}
+
+const SINGLE_MAX = 8 * 1024 * 1024; // up to one part: a single request; bigger files go in parts the server can resume
+
+/** Uploads a file; picking the same file again after a failure or reload resumes where it stopped. */
+export async function upload(file: File, parent: number | undefined, onProgress: (fraction: number) => void): Promise<Item> {
+  const mime = file.type || "application/octet-stream";
+  if (file.size <= SINGLE_MAX) return put<Item>(`/api/files?name=${encodeURIComponent(file.name)}${parent ? `&parent=${parent}` : ""}`, file, mime, onProgress);
+  const s = await call<{ id: string; partSize: number; parts: number[] }>("/api/uploads", send("POST", { name: file.name, parent, size: file.size, mime }));
+  const done = new Set(s.parts);
+  for (let n = 1, start = 0; start < file.size; n++, start += s.partSize) {
+    const part = file.slice(start, start + s.partSize);
+    if (!done.has(n)) await retry(() => put(`/api/uploads/${s.id}/parts/${n}`, part, "application/octet-stream", (f) => onProgress((start + f * part.size) / file.size)));
+    onProgress((start + part.size) / file.size);
+  }
+  return retry(() => call<Item>(`/api/uploads/${s.id}/complete`, send("POST")));
 }
