@@ -1,7 +1,7 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,8 +11,15 @@ const dir = mkdtempSync(join(tmpdir(), "cloud-test-"));
 let server: ChildProcess;
 
 const wrangler = (...args: string[]) => execFileSync("npx", ["wrangler", ...args], { stdio: "pipe" });
-const as = (who: string) => async (path: string, init: RequestInit = {}) =>
-  fetch(BASE + path, { ...init, headers: { "x-dev-email": who, ...init.headers } });
+const as = (who: string) => async (path: string, init: RequestInit = {}) => {
+  try {
+    // "connection: close": after a long pause (slow CLI steps) the server drops idle connections, and Node does not retry a POST on a dead one.
+    return await fetch(BASE + path, { ...init, headers: { "x-dev-email": who, connection: "close", ...init.headers } });
+  } catch (e) {
+    const c = (e as { cause?: { code?: string; message?: string } }).cause; // Node's "fetch failed" hides the real reason
+    throw new Error(`${init.method ?? "GET"} ${path} failed: ${c?.code ?? c?.message ?? e}`);
+  }
+};
 const mom = as("mom@example.com");
 const dad = as("dad@example.com");
 const json = async (r: Response) => r.json() as Promise<any>;
@@ -27,7 +34,7 @@ before(async () => {
   const p = ["--local", "--persist-to", dir];
   wrangler("d1", "migrations", "apply", "DB", ...p);
   wrangler("d1", "execute", "DB", ...p, "--command", "insert into users (email, role) values ('mom@example.com','admin'), ('dad@example.com','member')");
-  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--persist-to", dir, "--test-scheduled", "--var", "DEV_EMAIL:mom@example.com"], { stdio: "ignore" });
+  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--persist-to", dir, "--test-scheduled", "--var", "DEV_EMAIL:mom@example.com"], { stdio: process.env.TEST_SERVER_LOG ? ["ignore", openSync(process.env.TEST_SERVER_LOG, "w"), openSync(process.env.TEST_SERVER_LOG, "a")] : "ignore" }); // set TEST_SERVER_LOG=file to see the server's output
   for (let i = 0; i < 60; i++) {
     if (await fetch(`${BASE}/api/health`).then((r) => r.ok, () => false)) return;
     await new Promise((r) => setTimeout(r, 500));
@@ -564,14 +571,16 @@ test("backup: deleting the original keeps the copy, and the database can be rebu
   const tables = ["users", "nodes", "versions", "shares"];
   const snapshot = (where: string) => tables.map((t) => JSON.stringify(JSON.parse(wrangler("d1", "execute", "DB", "--local", "--persist-to", where, "--json", "--command", `select * from ${t} order by ${t === "shares" || t === "versions" || t === "nodes" || t === "users" ? "id" : "rowid"}`).toString())[0].results));
   const before = snapshot(dir);
-  const dumpFile = join(dir, "dump.json.gz");
-  const sqlFile = join(dir, "restore.sql");
+  const scratch = mkdtempSync(join(tmpdir(), "cloud-restore-")); // outside the server's data folder: files appearing there make the dev server restart
+  const dumpFile = join(scratch, "dump.json.gz");
+  const sqlFile = join(scratch, "restore.sql");
   writeFileSync(dumpFile, bucketGet("cloud-backup", `db/${new Date().toISOString().slice(0, 10)}.json.gz`));
   writeFileSync(sqlFile, execFileSync("node", ["scripts/restore-db.mjs", dumpFile]));
-  const fresh = join(dir, "fresh");
+  const fresh = join(scratch, "fresh");
   wrangler("d1", "migrations", "apply", "DB", "--local", "--persist-to", fresh);
   wrangler("d1", "execute", "DB", "--local", "--persist-to", fresh, "--file", sqlFile);
   assert.deepEqual(snapshot(fresh), before, "users, nodes, versions and shares are identical after the restore");
+  rmSync(scratch, { recursive: true, force: true });
 });
 
 // ---- backup care: warning, pruning, self-healing ----
