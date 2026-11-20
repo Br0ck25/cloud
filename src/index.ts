@@ -5,6 +5,7 @@ import { handleShares } from "./shares";
 import { handlePublic } from "./public";
 import { handleAdmin } from "./admin";
 import { handleVersions } from "./versions";
+import { backup } from "./backup";
 import { cleanup } from "./cleanup";
 
 export default {
@@ -24,7 +25,8 @@ export default {
     }
     return new Response("Not found", { status: 404 });
   },
-  async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(cleanup(env));
+  async scheduled(controller, env, ctx) {
+    // two schedules, so each gets its own request budget: 03:17 cleanup, 03:47 backup
+    ctx.waitUntil(controller.cron.startsWith("47 ") ? backup(env) : cleanup(env));
   },
 } satisfies ExportedHandler<Env>;

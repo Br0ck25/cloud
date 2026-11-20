@@ -506,3 +506,70 @@ test("nightly cleanup: abandoned large uploads are dropped, fresh ones kept", as
   assert.notEqual(again.id, stale.id);
   assert.deepEqual(again.parts, [], "starting that file again begins cleanly");
 });
+
+// ---- backup ----
+import { gunzipSync } from "node:zlib";
+import { writeFileSync } from "node:fs";
+
+const bucketGet = (bucket: string, key: string) => wrangler("r2", "object", "get", `${bucket}/${key}`, "--local", "--persist-to", dir, "--pipe");
+const inBucket = (bucket: string, key: string) => { try { bucketGet(bucket, key); return true; } catch { return false; } };
+const runBackup = async (f = mom) => json(await f("/api/admin/backup", { method: "POST" }));
+const settle = async () => { let s = await runBackup(); for (let i = 0; i < 10 && s.waiting - s.too_big > 0; i++) s = await runBackup(); return s; };
+
+test("backup: every file and thumbnail is copied byte for byte, once, with a database dump", async () => {
+  assert.equal((await dad("/api/admin/backup", { method: "POST" })).status, 403);
+
+  const data = pattern(4000);
+  const f = await putFile(mom, "to-back-up.png", data);
+  await mom(`/api/files/${f.id}/thumb`, { method: "PUT", body: new Uint8Array([0xff, 0xd8, 7]), headers: { "content-type": "image/jpeg" } });
+  await newVersion(mom, f.id, pattern(900)); // old content + its thumbnail become a version
+  const keys: string[] = sql(`select blob_key k from nodes where id = ${f.id} union select blob_key from versions where node_id = ${f.id} union select thumb_key from versions where node_id = ${f.id}`).map((r) => r.k);
+  assert.equal(keys.length, 3);
+  assert.ok(keys.every((k) => !inBucket("cloud-backup", k)), "nothing is in the backup bucket yet");
+
+  const s = await settle();
+  assert.equal(s.waiting, 0);
+  assert.equal(s.failed, 0);
+  assert.ok(s.ran_at && s.files >= 3 && s.bytes > 0);
+  for (const k of keys) assert.deepEqual(bucketGet("cloud-backup", k), bucketGet("cloud-files", k), `${k} matches the original`);
+
+  const filesBefore = s.files;
+  await putFile(mom, "second-file.png", pattern(100));
+  const s2 = await runBackup();
+  assert.equal(s2.files, filesBefore + 1, "only the new file was copied");
+  assert.equal(s2.waiting, 0);
+  assert.equal((await json(await mom("/api/admin"))).backup.files, s2.files, "the admin page shows the same status");
+
+  const dump = JSON.parse(gunzipSync(bucketGet("cloud-backup", `db/${new Date().toISOString().slice(0, 10)}.json.gz`)).toString());
+  assert.equal(dump.tables.nodes.length, sql("select count(*) c from nodes")[0].c);
+  assert.equal(dump.tables.users.length, sql("select count(*) c from users")[0].c);
+});
+
+test("backup: deleting the original keeps the copy, and the database can be rebuilt from the dump", async () => {
+  const f = await putFile(mom, "will-be-purged.png", pattern(777));
+  const key = sql(`select blob_key k from nodes where id = ${f.id}`)[0].k;
+  await settle();
+  assert.ok(inBucket("cloud-backup", key));
+
+  await mom(`/api/files/${f.id}`, { method: "DELETE" });
+  sql(`update nodes set trashed_at = unixepoch() - 40 * 86400 where id = ${f.id}`);
+  await nightly(); // purge
+  assert.ok(!inBucket("cloud-files", key), "the original is gone for good");
+  assert.ok(inBucket("cloud-backup", key), "the backup copy is still there");
+  assert.deepEqual(new Uint8Array(bucketGet("cloud-backup", key)), pattern(777));
+  const s = await runBackup();
+  assert.ok(s.kept_after_delete >= 1, "the admin status counts copies kept after deletion");
+
+  // Rebuild the database in a brand new D1 from the dump and compare every table row by row.
+  const tables = ["users", "nodes", "versions", "shares"];
+  const snapshot = (where: string) => tables.map((t) => JSON.stringify(JSON.parse(wrangler("d1", "execute", "DB", "--local", "--persist-to", where, "--json", "--command", `select * from ${t} order by ${t === "shares" || t === "versions" || t === "nodes" || t === "users" ? "id" : "rowid"}`).toString())[0].results));
+  const before = snapshot(dir);
+  const dumpFile = join(dir, "dump.json.gz");
+  const sqlFile = join(dir, "restore.sql");
+  writeFileSync(dumpFile, bucketGet("cloud-backup", `db/${new Date().toISOString().slice(0, 10)}.json.gz`));
+  writeFileSync(sqlFile, execFileSync("node", ["scripts/restore-db.mjs", dumpFile]));
+  const fresh = join(dir, "fresh");
+  wrangler("d1", "migrations", "apply", "DB", "--local", "--persist-to", fresh);
+  wrangler("d1", "execute", "DB", "--local", "--persist-to", fresh, "--file", sqlFile);
+  assert.deepEqual(snapshot(fresh), before, "users, nodes, versions and shares are identical after the restore");
+});
