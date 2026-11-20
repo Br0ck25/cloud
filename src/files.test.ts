@@ -757,3 +757,68 @@ test("delete forever: only your own trash (and Family's); emptying takes everyth
   assert.equal(all.remaining, 0);
   assert.deepEqual(await trashIds(mom), []);
 });
+
+// ---- zip download ----
+import { inspectZip, sha as shaOf } from "../e2e/zipcheck.mjs";
+const zipOf = async (f: typeof mom, ids: number[]) => f(`/api/zip?ids=${ids.join(",")}`);
+const zipBody = async (r: Response) => new Uint8Array(await r.arrayBuffer());
+
+test("zip: a folder downloads with its whole tree, empty folders and exact bytes", async () => {
+  const root = await mkdir(mom, "ZipRoot");
+  const sub = await mkdir(mom, "Sub folder", root.id);
+  await mkdir(mom, "Empty", root.id);
+  const deep = await mkdir(mom, "Ünï", sub.id);
+  const a = pattern(5000, 1), b = pattern(70_000, 2), c = pattern(3, 3);
+  await putFile(mom, "a.png", a, root.id);
+  await putFile(mom, "b café.png", b, sub.id);
+  await putFile(mom, "日本語.png", c, deep.id);
+  const gone = await putFile(mom, "trashed.png", pattern(10), root.id);
+  await mom(`/api/files/${gone.id}`, { method: "DELETE" });
+
+  const r = await zipOf(mom, [root.id]);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "application/zip");
+  assert.match(r.headers.get("content-disposition")!, /^attachment; filename\*=UTF-8''ZipRoot\.zip$/);
+  const z = inspectZip(await zipBody(r));
+  assert.equal(z.bad, null, "every file's CRC checks out in an independent reader");
+  assert.deepEqual([...z.names].sort(), ["ZipRoot/", "ZipRoot/Empty/", "ZipRoot/Sub folder/", "ZipRoot/Sub folder/Ünï/", "ZipRoot/Sub folder/Ünï/日本語.png", "ZipRoot/Sub folder/b café.png", "ZipRoot/a.png"].sort());
+  assert.deepEqual(z.sha, { "ZipRoot/a.png": shaOf(a), "ZipRoot/Sub folder/b café.png": shaOf(b), "ZipRoot/Sub folder/Ünï/日本語.png": shaOf(c) });
+  assert.ok(!z.names.some((n: string) => n.includes("trashed")), "trashed items are left out");
+
+  const info = await json(await mom(`/api/zip?ids=${root.id}&check=1`));
+  assert.deepEqual(info, { name: "ZipRoot.zip", files: 3, bytes: 5000 + 70_000 + 3 });
+});
+
+test("zip: several picked items, same names, and who may download what", async () => {
+  const one = await mkdir(mom, "ZipPickA");
+  const two = await mkdir(mom, "ZipPickB");
+  const x = await putFile(mom, "same.png", pattern(11, 4), one.id);
+  const y = await putFile(mom, "same.png", pattern(22, 5), two.id); // picked together, same name
+  const lone = await putFile(mom, "lone.png", pattern(33, 6));
+  const r = await zipOf(mom, [x.id, y.id, lone.id]);
+  assert.match(r.headers.get("content-disposition")!, /Family%20Cloud\.zip/);
+  const z = inspectZip(await zipBody(r));
+  assert.equal(z.bad, null);
+  assert.deepEqual([...z.names].sort(), ["lone.png", "same (1).png", "same.png"], "a clash gets a number, nothing is overwritten");
+  assert.deepEqual(new Set(Object.values(z.sha)), new Set([shaOf(pattern(11, 4)), shaOf(pattern(22, 5)), shaOf(pattern(33, 6))]));
+
+  const secret = await putFile(mom, "zip-secret.png", pattern(9));
+  assert.equal((await zipOf(dad, [secret.id])).status, 404, "dad cannot download mom's private file");
+  const mixed = inspectZip(await zipBody(await zipOf(dad, [secret.id, (await putFile(dad, "dads.png", pattern(7))).id])));
+  assert.deepEqual(mixed.names, ["dads.png"], "what he may not see is simply left out");
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const shared = await putFile(mom, "zip-family.png", pattern(15, 8), family.id);
+  assert.deepEqual(inspectZip(await zipBody(await zipOf(dad, [shared.id]))).names, ["zip-family.png"], "anyone can download Family's files");
+});
+
+test("zip: bad requests get a clear refusal", async () => {
+  assert.equal((await mom("/api/zip")).status, 400);
+  assert.equal((await mom("/api/zip?ids=abc")).status, 400);
+  assert.equal((await mom("/api/zip?ids=1.5")).status, 400);
+  assert.equal((await mom(`/api/zip?ids=${Array.from({ length: 101 }, (_, i) => i + 1).join(",")}`)).status, 400, "more than 100 items");
+  assert.equal((await mom("/api/zip?ids=999999")).status, 404);
+  const trashed = await putFile(mom, "zip-trashed.png", pattern(5));
+  await mom(`/api/files/${trashed.id}`, { method: "DELETE" });
+  assert.equal((await zipOf(mom, [trashed.id])).status, 404, "a trashed item is not downloadable");
+  assert.equal((await mom("/api/zip?ids=1", { method: "POST" })).status, 404);
+});

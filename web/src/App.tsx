@@ -11,7 +11,7 @@ import { clearInbox, readInbox } from "./inbox";
 import { SelectBar } from "./SelectBar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import type { Confirm } from "./ConfirmSheet";
-import { emptyTrash, moveAll, purgeAll, report, restoreAll, trashAll } from "./bulk";
+import { download, emptyTrash, moveAll, purgeAll, report, restoreAll, trashAll } from "./bulk";
 import { longPress, useSelection } from "./selection";
 import { Admin } from "./Admin";
 import { Photos } from "./Photos";
@@ -132,7 +132,7 @@ export function App() {
         <button onClick={() => setMoving([i])}>Move</button>
         <button onClick={() => setSharing(i)}>Share link</button>
         {i.kind === "file" && <button onClick={() => setVersioning(i)}>Versions</button>}
-        {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
+        {i.kind === "file" ? <a href={api.fileUrl(i.id, true)}>Download</a> : <button onClick={async () => setNote(await download([i]))}>Download as zip</button>}
         <button onClick={() => act(api.trash(i.id))}>Delete</button>
       </div>
     </details>
@@ -167,7 +167,8 @@ export function App() {
           actions={inTrash
             ? [{ label: "Restore", onClick: () => bulk(restoreAll(ids), "restored") },
                { label: "Delete forever", danger: true, onClick: () => setConfirm({ title: `Delete ${ids.length} ${ids.length === 1 ? "item" : "items"} forever?`, message: "They cannot be recovered from the app afterwards.", action: "Delete forever", ok: () => bulk(purgeAll(ids), "deleted") }) }]
-            : [{ label: "Move", disabled: !sameSpace, onClick: () => setMoving(chosen) },
+            : [{ label: "Download", onClick: async () => setNote(await download(chosen)) },
+               { label: "Move", disabled: !sameSpace, onClick: () => setMoving(chosen) },
                { label: "Delete", danger: true, onClick: () => bulk(trashAll(ids), "deleted") }]} />
       )}
 

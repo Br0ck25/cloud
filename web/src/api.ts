@@ -41,6 +41,8 @@ export const trash = (id: number) => call(`/api/files/${id}`, send("DELETE"));
 export const restore = (id: number) => call(`/api/files/${id}/restore`, send("POST"));
 export const thumbUrl = (id: number, changed: number) => `/api/files/${id}/thumb?v=${changed}`; // the address changes with the file, so a new version never shows the old picture
 export const putThumb = (id: number, jpeg: Blob) => fetch(`/api/files/${id}/thumb`, { method: "PUT", body: jpeg, headers: { "content-type": "image/jpeg" } });
+export const zipUrl = (ids: number[]) => `/api/zip?ids=${ids.join(",")}`;
+export const zipCheck = (ids: number[]) => call<{ name: string; files: number; bytes: number }>(`/api/zip?ids=${ids.join(",")}&check=1`);
 export const fileUrl = (id: number, download = false) => `/api/files/${id}${download ? "?download=1" : ""}`;
 
 /** XHR rather than fetch because fetch cannot report upload progress. */

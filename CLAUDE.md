@@ -21,6 +21,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/versions.ts` new versions, history, restore (max 10 kept per file)
 - `src/cleanup.ts` nightly cron: purge old trash and abandoned uploads
 - `src/backup.ts` nightly copy to the backup bucket + database dump; `scripts/restore-db.mjs` rebuilds the database from a dump (`docs/RESTORE.md`)
+- `src/zip.ts` zip download request; `src/zipwriter.ts` the streaming ZIP writer (pure, unit-tested against Python's zip reader)
 - `src/shares.ts` manage public links (signed in); `src/public.ts` the public `/s/<token>` pages (no sign-in, no scripts)
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan

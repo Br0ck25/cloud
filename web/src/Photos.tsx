@@ -5,7 +5,7 @@ import { Viewer } from "./Viewer";
 import { Picker } from "./Picker";
 import { SelectBar } from "./SelectBar";
 import { longPress, useSelection } from "./selection";
-import { moveAll, report, trashAll } from "./bulk";
+import { download, moveAll, report, trashAll } from "./bulk";
 
 const month = (i: Item) => new Date((i.taken_at ?? i.updated_at) * 1000).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
@@ -56,7 +56,7 @@ export function Photos() {
     <>
       {sel
         ? <SelectBar count={chosen.length} total={items.length} onAll={() => selection.all(items.map((i) => i.id))} onClear={selection.clear}
-            actions={[{ label: "Move", disabled: !sameSpace, onClick: () => setMoving(chosen) }, { label: "Delete", danger: true, onClick: async () => finish(await trashAll(ids), "deleted", ids) }]} />
+            actions={[{ label: "Download", onClick: async () => setNote(await download(chosen)) }, { label: "Move", disabled: !sameSpace, onClick: () => setMoving(chosen) }, { label: "Delete", danger: true, onClick: async () => finish(await trashAll(ids), "deleted", ids) }]} />
         : items.length > 0 && <div class="bar"><button class="btn" onClick={() => selection.start()}>Select</button></div>}
       {note && <p class="notice" role="status" onClick={() => setNote("")}>{note}</p>}
       {groups.map((g) => (

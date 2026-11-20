@@ -37,3 +37,13 @@ export async function emptyTrash(): Promise<string[]> {
 /** A sentence about what went wrong, or "" when everything worked. */
 export const report = (failed: string[], verb: string) =>
   failed.length ? `${failed.length} could not be ${verb}: ${[...new Set(failed)].slice(0, 2).join("; ")}` : "";
+
+/** Starts downloading the items: a single file as itself, anything else as one zip. Returns a sentence if it cannot (too many, too big). */
+export async function download(items: { id: number; kind: string }[]): Promise<string> {
+  if (items.length === 1 && items[0].kind === "file") { location.href = api.fileUrl(items[0].id, true); return ""; }
+  if (items.length > 100) return "Pick up to 100 items at a time, or put them in a folder and download the folder.";
+  const ids = items.map((i) => i.id);
+  try { await api.zipCheck(ids); } catch (e) { return (e as Error).message; } // asks first, so a refusal shows here instead of replacing the page
+  location.href = api.zipUrl(ids);
+  return "";
+}

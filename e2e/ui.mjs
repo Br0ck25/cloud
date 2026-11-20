@@ -6,7 +6,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
+import { inspectZip, sha } from "./zipcheck.mjs";
 
 const PORT = 8900 + Math.floor(Math.random() * 90);
 const U = `http://localhost:${PORT}`;
@@ -272,6 +274,39 @@ try {
     await home(kid);
     await kid.click(".account summary");
     check(!(await kid.isVisible(".account >> text=Admin")) && !(await kid.isVisible(".notice")), "a member has no Admin link and no banner");
+  });
+
+  await step("download a folder, a selection and a single file", async () => {
+    const p = await newPage();
+    const api = async (method, path, data, type) => (await p.request.fetch(U + path, { method, data, headers: type ? { "content-type": type } : {} })).json().catch(() => ({}));
+    const folder = async (name, parent) => (await api("POST", "/api/folders", { name, parent })).id;
+    const put = async (name, parent, bytes) => api("PUT", `/api/files?name=${encodeURIComponent(name)}${parent ? `&parent=${parent}` : ""}`, bytes, "application/octet-stream");
+    const one = await folder("ZipMe"), inner = await folder("Inner", one), two = await folder("ZipToo");
+    const bytes = { a: Buffer.from("first file"), b: Buffer.alloc(100_000, 7), c: Buffer.from("third") };
+    await put("a.txt", one, bytes.a); await put("b.bin", inner, bytes.b); await put("c.txt", two, bytes.c);
+    await put("lonely.txt", undefined, Buffer.from("just me"));
+    await home(p);
+    const grab = async (click) => { const [d] = await Promise.all([p.waitForEvent("download"), click()]); return { name: d.suggestedFilename(), bytes: readFileSync(await d.path()) }; };
+
+    const z1 = await grab(async () => { await menu(p, "ZipMe", "Download as zip"); });
+    check(z1.name === "ZipMe.zip", "folder zip is named after the folder: " + z1.name);
+    const r1 = inspectZip(z1.bytes);
+    check(r1.bad === null && r1.names.sort().join() === "ZipMe/,ZipMe/Inner/,ZipMe/Inner/b.bin,ZipMe/a.txt", "folder tree: " + r1.names);
+    check(r1.sha["ZipMe/Inner/b.bin"] === sha(bytes.b) && r1.sha["ZipMe/a.txt"] === sha(bytes.a), "contents are identical");
+
+    await p.click(".searchrow >> text=Select");
+    await p.click('.check[aria-label="Select ZipMe"]');
+    await p.click('.check[aria-label="Select ZipToo"]');
+    const z2 = await grab(() => p.click(".selbar >> text=Download"));
+    check(z2.name === "Family Cloud.zip", "several items: " + z2.name);
+    const r2 = inspectZip(z2.bytes);
+    check(r2.bad === null && r2.names.includes("ZipToo/c.txt") && r2.names.includes("ZipMe/Inner/b.bin"), "both trees are in it: " + r2.names);
+    await p.click(".selbar >> text=✕");
+
+    await p.click(".searchrow >> text=Select");
+    await p.click('.check[aria-label="Select lonely.txt"]');
+    const z3 = await grab(() => p.click(".selbar >> text=Download"));
+    check(z3.name === "lonely.txt" && z3.bytes.toString() === "just me", "one file downloads as itself, not a zip: " + z3.name);
   });
 
   await step("no page broke the Content-Security-Policy", async () => { check(cspViolations.length === 0, cspViolations.join(" | ")); });
