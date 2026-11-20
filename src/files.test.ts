@@ -573,3 +573,65 @@ test("backup: deleting the original keeps the copy, and the database can be rebu
   wrangler("d1", "execute", "DB", "--local", "--persist-to", fresh, "--file", sqlFile);
   assert.deepEqual(snapshot(fresh), before, "users, nodes, versions and shares are identical after the restore");
 });
+
+// ---- backup care: warning, pruning, self-healing ----
+test("backup: admins are warned on /api/me when it is stale; members never see it", async () => {
+  await settle();
+  assert.equal((await json(await mom("/api/me"))).backup_warning, null);
+  sql("update backup_status set ran_at = unixepoch() - 40 * 3600 where id = 1");
+  assert.match((await json(await mom("/api/me"))).backup_warning, /more than a day and a half/);
+  assert.ok(!("backup_warning" in (await json(await dad("/api/me")))), "regular members get no backup information");
+  await runBackup();
+  assert.equal((await json(await mom("/api/me"))).backup_warning, null, "a fresh run clears it");
+});
+
+test("backup: a copy is removed 30 days after its original is gone, never before and never while the original exists", async () => {
+  const live = await putFile(mom, "stays-forever.png", pattern(50));
+  const recent = await putFile(mom, "gone-recently.png", pattern(60));
+  const old = await putFile(mom, "gone-long-ago.png", pattern(70));
+  const keyOf = (id: number) => sql(`select blob_key k from nodes where id = ${id}`)[0].k as string;
+  const [kLive, kRecent, kOld] = [live.id, recent.id, old.id].map(keyOf);
+  await settle();
+  for (const k of [kLive, kRecent, kOld]) assert.ok(inBucket("cloud-backup", k));
+
+  for (const f of [recent, old]) {
+    await mom(`/api/files/${f.id}`, { method: "DELETE" });
+    sql(`update nodes set trashed_at = unixepoch() - 40 * 86400 where id = ${f.id}`);
+  }
+  await nightly(); // purge both from the main bucket
+  await runBackup(); // notices they are gone and starts the 30-day clock
+  assert.ok(sql(`select gone_at g from backed_up where key = '${kOld}'`)[0].g, "the clock started for the deleted file");
+  assert.equal(sql(`select gone_at g from backed_up where key = '${kLive}'`)[0].g, null, "no clock for a file that still exists");
+
+  sql(`update backed_up set gone_at = unixepoch() - 31 * 86400 where key = '${kOld}'`);
+  sql(`update backed_up set gone_at = unixepoch() - 5 * 86400 where key = '${kRecent}'`);
+  sql(`update backed_up set gone_at = unixepoch() - 400 * 86400 where key = '${kLive}'`); // even a bogus ancient mark must not delete a live file's copy
+  await runBackup();
+
+  assert.ok(!inBucket("cloud-backup", kOld), "31 days after it was gone, the copy is removed");
+  assert.equal(sql(`select count(*) c from backed_up where key = '${kOld}'`)[0].c, 0, "and its tracking row");
+  assert.ok(inBucket("cloud-backup", kRecent), "5 days after it was gone, the copy is still there");
+  assert.ok(inBucket("cloud-backup", kLive), "a file that still exists keeps its copy however old the mark");
+  assert.equal(sql(`select gone_at g from backed_up where key = '${kLive}'`)[0].g, null, "the bogus mark was cleared");
+});
+
+test("backup: a copy deleted from the backup bucket is noticed and copied again", async () => {
+  const data = pattern(321);
+  const f = await putFile(mom, "heal-me.png", data);
+  const key = sql(`select blob_key k from nodes where id = ${f.id}`)[0].k as string;
+  await settle();
+  assert.ok(inBucket("cloud-backup", key));
+
+  wrangler("r2", "object", "delete", `cloud-backup/${key}`, "--local", "--persist-to", dir);
+  assert.ok(!inBucket("cloud-backup", key), "someone deleted the backup copy");
+  sql(`update backed_up set checked_at = unixepoch() where key != '${key}'`); // so this one is first in line for checking
+  sql(`update backed_up set checked_at = null where key = '${key}'`);
+
+  const s = await runBackup();
+  assert.equal(s.repaired, 1);
+  assert.ok(inBucket("cloud-backup", key), "it was copied again");
+  assert.deepEqual(new Uint8Array(bucketGet("cloud-backup", key)), data, "with the right bytes");
+  assert.match((await json(await mom("/api/me"))).backup_warning, /1 backup copy had gone missing and was copied again/);
+  assert.equal((await runBackup()).repaired, 0, "and the next run is clean");
+  assert.equal((await json(await mom("/api/me"))).backup_warning, null);
+});

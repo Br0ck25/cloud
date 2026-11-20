@@ -5,7 +5,7 @@ import { handleShares } from "./shares";
 import { handlePublic } from "./public";
 import { handleAdmin } from "./admin";
 import { handleVersions } from "./versions";
-import { backup } from "./backup";
+import { backup, backupWarning } from "./backup";
 import { cleanup } from "./cleanup";
 
 export default {
@@ -19,7 +19,7 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       const user = await requireUser(req, env);
       if (user instanceof Response) return user;
-      if (url.pathname === "/api/me") return Response.json(user);
+      if (url.pathname === "/api/me") return Response.json(user.role === "admin" ? { ...user, backup_warning: await backupWarning(env) } : user);
       const res = (await handleFiles(req, env, user, url)) ?? (await handleUploads(req, env, user, url)) ?? (await handleShares(req, env, user, url)) ?? (await handleVersions(req, env, user, url)) ?? (await handleAdmin(req, env, user, url));
       if (res) return res;
     }
