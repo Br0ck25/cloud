@@ -313,3 +313,41 @@ test("link share lifecycle: validation, listing, expiry, revoke and who may mana
   const fam = await makeShare(dad, shared.id); // any family member can link an item in Family...
   assert.equal((await mom(`/api/shares/${fam.id}`, { method: "DELETE" })).status, 204); // ...and any can revoke it
 });
+
+// ---- admin ----
+test("admin: only admins, adding and removing family, storage numbers", async () => {
+  assert.equal((await dad("/api/admin")).status, 403); // members cannot see the family list
+  assert.equal((await dad("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "x@example.com" }) })).status, 403);
+
+  const aunt = as("aunt@example.com");
+  assert.equal((await aunt("/api/me")).status, 403); // not on the list yet
+  const added = await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "  Aunt@Example.com " }) });
+  assert.equal(added.status, 201);
+  const auntRow = await json(added);
+  assert.deepEqual([auntRow.email, auntRow.role, auntRow.active], ["aunt@example.com", "member", 1]);
+  assert.equal((await aunt("/api/me")).status, 200); // now she can sign in
+  assert.equal((await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "not-an-email" }) })).status, 400);
+
+  const mine = (await json(await mom("/api/admin"))).users.find((u: any) => u.email === "mom@example.com");
+  assert.equal((await mom(`/api/admin/users/${mine.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) })).status, 400); // no locking yourself out
+  assert.equal((await mom(`/api/admin/users/${mine.id}`, { method: "PATCH", body: JSON.stringify({ role: "member" }) })).status, 400);
+  assert.equal((await mom("/api/admin/users/99999", { method: "PATCH", body: JSON.stringify({ active: false }) })).status, 404);
+  assert.equal((await mom(`/api/admin/users/${auntRow.id}`, { method: "PATCH", body: JSON.stringify({ role: "boss" }) })).status, 400);
+
+  await aunt("/api/files?name=aunt.png", { method: "PUT", body: new Uint8Array(1234), headers: { "content-type": "image/png" } });
+  const removed = await json(await mom(`/api/admin/users/${auntRow.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) }));
+  assert.equal(removed.active, 0);
+  assert.equal(removed.bytes, 1234); // her files are kept and still counted
+  assert.equal((await aunt("/api/me")).status, 403); // access is off
+  assert.equal((await aunt("/api/files")).status, 403);
+  assert.equal((await mom("/api/admin/users", { method: "POST", body: JSON.stringify({ email: "aunt@example.com", role: "admin" }) })).status, 201); // adding again restores access
+  assert.equal((await aunt("/api/me")).status, 200);
+  assert.equal((await json(await aunt("/api/me"))).role, "admin");
+
+  const before = await json(await mom("/api/admin"));
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  await upload(mom, "admin-count.png", new Uint8Array(1000), family.id);
+  const after = await json(await mom("/api/admin"));
+  assert.equal(after.family_bytes - before.family_bytes, 1000);
+  assert.equal(after.total_bytes, after.users.reduce((t: number, u: any) => t + u.bytes, after.family_bytes));
+});

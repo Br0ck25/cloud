@@ -3,6 +3,7 @@ import { handleFiles } from "./files";
 import { handleUploads } from "./uploads";
 import { handleShares } from "./shares";
 import { handlePublic } from "./public";
+import { handleAdmin } from "./admin";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -16,7 +17,7 @@ export default {
       const user = await requireUser(req, env);
       if (user instanceof Response) return user;
       if (url.pathname === "/api/me") return Response.json(user);
-      const res = (await handleFiles(req, env, user, url)) ?? (await handleUploads(req, env, user, url)) ?? (await handleShares(req, env, user, url));
+      const res = (await handleFiles(req, env, user, url)) ?? (await handleUploads(req, env, user, url)) ?? (await handleShares(req, env, user, url)) ?? (await handleAdmin(req, env, user, url));
       if (res) return res;
     }
     return new Response("Not found", { status: 404 });

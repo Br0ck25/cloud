@@ -12,7 +12,12 @@ const send = (method: string, body?: object): RequestInit => ({ method, body: bo
 
 export type Share = { id: number; token: string; expires_at: number | null; created_at: number };
 
-export const me = () => call<{ email: string }>("/api/me");
+export type Person = { id: number; email: string; role: "admin" | "member"; active: number; bytes: number };
+
+export const me = () => call<{ id: number; email: string; role: "admin" | "member" }>("/api/me");
+export const admin = () => call<{ users: Person[]; family_bytes: number; total_bytes: number }>("/api/admin");
+export const addPerson = (email: string) => call("/api/admin/users", send("POST", { email }));
+export const editPerson = (id: number, patch: { role?: string; active?: boolean }) => call(`/api/admin/users/${id}`, send("PATCH", patch));
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call("/api/folders", send("POST", { name, parent }));

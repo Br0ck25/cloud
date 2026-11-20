@@ -5,31 +5,17 @@ import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
 import { ShareSheet } from "./ShareSheet";
 import { clearInbox, readInbox } from "./inbox";
+import { Admin } from "./Admin";
+import { AskSheet } from "./AskSheet";
+import type { Ask } from "./AskSheet";
+import { size } from "./format";
 
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
-const size = (n: number | null) => (n == null ? "" : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(1)} GB`);
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
 type Upload = { name: string; pct: number; file: File; dest?: number; error?: string };
 const folderOf = (hash: string) => { const m = /^#\/f\/(\d+)$/.exec(hash); return m ? Number(m[1]) : undefined; };
-type Ask = { title: string; value: string; ok: (v: string) => void };
-
-function AskSheet({ ask, close }: { ask: Ask; close: () => void }) {
-  const [v, setV] = useState(ask.value);
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => { input.current?.focus(); input.current?.select(); }, []);
-  return (
-    <div class="modal" onClick={close}>
-      <form class="sheet" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (v.trim()) ask.ok(v.trim()); close(); }}>
-        <h2>{ask.title}</h2>
-        <input ref={input} value={v} onInput={(e) => setV(e.currentTarget.value)} />
-        <div class="row"><button type="button" class="btn" onClick={close}>Cancel</button><button class="btn primary">Save</button></div>
-      </form>
-    </div>
-  );
-}
-
 const Tile = ({ i }: { i: Item }) => <span class="tile">{i.thumb ? <img src={api.thumbUrl(i.id)} alt="" loading="lazy" /> : icon(i)}</span>;
 
 function useHash() {
@@ -45,9 +31,10 @@ function useHash() {
 export function App() {
   const hash = useHash();
   const inTrash = hash === "#/trash";
+  const inAdmin = hash === "#/admin";
   const folderId = folderOf(hash);
 
-  const [email, setEmail] = useState("");
+  const [me, setMe] = useState<{ id: number; email: string; role: string } | null>(null);
   const [parent, setParent] = useState<Item | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [error, setError] = useState("");
@@ -65,6 +52,7 @@ export function App() {
   const load = () => {
     const n = ++latest.current;
     const h = location.hash;
+    if (h === "#/admin") return Promise.resolve();
     return (h === "#/trash" ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderOf(h)))
       .then((r) => { if (n === latest.current) { setParent(r.parent); setItems(r.items); setError(""); } })
       .catch((e) => { if (n === latest.current) setError(e.message); });
@@ -73,7 +61,7 @@ export function App() {
   useEffect(() => {
     if (hash === "#/share") readInbox().then((f) => (f.length ? setInbox(f) : (location.hash = "#/")), () => (location.hash = "#/"));
   }, [hash]);
-  useEffect(() => { api.me().then((m) => setEmail(m.email), () => {}); }, []);
+  useEffect(() => { api.me().then(setMe, () => {}); }, []);
 
   const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
 
@@ -99,16 +87,21 @@ export function App() {
     <div class={drag ? "page drag" : "page"}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
       onDragLeave={() => setDrag(false)}
-      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
+      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash && !inAdmin) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
       <header>
-        <h1>{inTrash ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : parent ? parent.name : "Family Cloud"}</h1>
+        <h1>{inTrash || inAdmin ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : inAdmin ? "Admin" : parent ? parent.name : "Family Cloud"}</h1>
         <details class="account">
-          <summary class="who">{email || "Account"}</summary>
-          <div class="menu"><a href="/cdn-cgi/access/logout">Sign out</a></div>
+          <summary class="who">{me?.email || "Account"}</summary>
+          <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
+            {me?.role === "admin" && <a href="#/admin">Admin</a>}
+            <a href="/cdn-cgi/access/logout">Sign out</a>
+          </div>
         </details>
       </header>
 
-      {!inTrash && (
+      {inAdmin && me && <Admin me={me.id} ask={setAsk} />}
+
+      {!inTrash && !inAdmin && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
           <button class="btn" onClick={() => setAsk({ title: "New folder", value: "", ok: (n) => act(api.mkdir(n, folderId)) })}>New folder</button>
@@ -125,7 +118,7 @@ export function App() {
         </div>
       ))}
 
-      <ul class="list">
+      {!inAdmin && <ul class="list">
         {items.map((i) => {
           const locked = i.shared === 1 && i.parent_id === null;
           return (
@@ -152,7 +145,7 @@ export function App() {
           );
         })}
         {!items.length && !error && <li class="empty">{inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
-      </ul>
+      </ul>}
 
       {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}
         ok={(to) => act(api.move(moving.id, to ?? null))} close={() => setMoving(null)} />}

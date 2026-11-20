@@ -47,6 +47,6 @@ export async function requireUser(req: Request, env: Env): Promise<User | Respon
   if (admin && email === admin.toLowerCase()) {
     await env.DB.prepare("insert into users (email, role) values (?, 'admin') on conflict(email) do nothing").bind(email).run();
   }
-  const user = await env.DB.prepare("select id, email, role from users where email = ?").bind(email).first<User>();
+  const user = await env.DB.prepare("select id, email, role from users where email = ? and active = 1").bind(email).first<User>();
   return user ?? new Response("Forbidden", { status: 403 });
 }
