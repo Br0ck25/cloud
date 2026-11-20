@@ -27,7 +27,7 @@ before(async () => {
   const p = ["--local", "--persist-to", dir];
   wrangler("d1", "migrations", "apply", "DB", ...p);
   wrangler("d1", "execute", "DB", ...p, "--command", "insert into users (email, role) values ('mom@example.com','admin'), ('dad@example.com','member')");
-  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--persist-to", dir, "--var", "DEV_EMAIL:mom@example.com"], { stdio: "ignore" });
+  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--persist-to", dir, "--test-scheduled", "--var", "DEV_EMAIL:mom@example.com"], { stdio: "ignore" });
   for (let i = 0; i < 60; i++) {
     if (await fetch(`${BASE}/api/health`).then((r) => r.ok, () => false)) return;
     await new Promise((r) => setTimeout(r, 500));
@@ -449,4 +449,60 @@ test("versions: who may use them, and what they cost", async () => {
   await mom(`/api/files/${shared.id}`, { method: "DELETE" });
   assert.equal((await newVersion(mom, shared.id, pattern(5))).status, 404); // trashed files are frozen
   assert.equal((await mom(`/api/files/${shared.id}/versions`)).status, 404);
+});
+
+// ---- nightly cleanup ----
+const nightly = () => fetch(`${BASE}/cdn-cgi/handler/scheduled`); // dev server started with --test-scheduled
+const inStorage = (key: string) => { try { wrangler("r2", "object", "get", `cloud-files/${key}`, "--local", "--persist-to", dir, "--pipe"); return true; } catch { return false; } };
+
+test("nightly cleanup: month-old trash is gone for good, everything else is untouched", async () => {
+  const old = await mkdir(mom, "OldTrash");
+  const inner = await mkdir(mom, "inner", old.id);
+  const f = await putFile(mom, "doomed.png", pattern(100), inner.id);
+  await mom(`/api/files/${f.id}/thumb`, { method: "PUT", body: new Uint8Array([0xff, 0xd8]), headers: { "content-type": "image/jpeg" } });
+  await newVersion(mom, f.id, pattern(50)); // now: a current blob, plus a version holding the old blob and the thumbnail
+  const link = await makeShare(mom, f.id);
+  const recent = await putFile(mom, "recent-trash.png", pattern(10));
+  const keeper = await putFile(mom, "keeper.png", pattern(12));
+
+  const keys: string[] = sql(`select blob_key k from nodes where id = ${f.id} union select blob_key from versions where node_id = ${f.id} union select thumb_key from versions where node_id = ${f.id}`).map((r) => r.k);
+  assert.equal(keys.length, 3);
+  assert.ok(keys.every(inStorage), "all three objects exist before the cleanup");
+
+  assert.equal((await mom(`/api/files/${old.id}`, { method: "DELETE" })).status, 204);
+  assert.equal((await mom(`/api/files/${recent.id}`, { method: "DELETE" })).status, 204);
+  sql(`update nodes set trashed_at = unixepoch() - 31 * 86400 where id = ${old.id}`);
+  sql(`update nodes set trashed_at = unixepoch() - 5 * 86400 where id = ${recent.id}`);
+  assert.equal((await pub(`/s/${link.token}`)).status, 404); // already off because its folder is in the trash
+
+  assert.equal((await nightly()).status, 200);
+
+  const left = (table: string, col: string, ids: number[]) => sql(`select count(*) c from ${table} where ${col} in (${ids.join(",")})`)[0].c;
+  assert.equal(left("nodes", "id", [old.id, inner.id, f.id]), 0, "the folder, its subfolder and the file are gone");
+  assert.equal(left("versions", "node_id", [f.id]), 0);
+  assert.equal(left("shares", "node_id", [f.id]), 0);
+  assert.ok(keys.every((k) => !inStorage(k)), "their storage objects were deleted too");
+
+  assert.ok((await json(await mom("/api/trash"))).items.some((i: any) => i.id === recent.id), "5-day-old trash is still recoverable");
+  assert.equal((await mom(`/api/files/${recent.id}/restore`, { method: "POST" })).status, 200);
+  assert.deepEqual(await bytesOf(mom, keeper.id), pattern(12), "live files are untouched");
+  assert.equal((await nightly()).status, 200); // running again changes nothing
+  assert.equal((await mom(`/api/files/${keeper.id}`)).status, 200);
+});
+
+test("nightly cleanup: abandoned large uploads are dropped, fresh ones kept", async () => {
+  const data = pattern(9 * MiB);
+  const stale = await json(await startUpload(mom, { name: "abandoned.bin", size: data.length }));
+  await sendPart(mom, stale.id, 1, data.slice(0, 8 * MiB));
+  const fresh = await json(await startUpload(mom, { name: "fresh.bin", size: data.length }));
+  sql(`update uploads set created_at = unixepoch() - 7 * 86400 where id = '${stale.id}'`);
+
+  assert.equal((await nightly()).status, 200);
+
+  assert.equal((await sendPart(mom, stale.id, 2, data.slice(8 * MiB))).status, 404, "the abandoned session is gone");
+  assert.equal((await sendPart(mom, fresh.id, 2, data.slice(8 * MiB))).status, 204, "a recent session is untouched");
+  assert.equal(sql(`select count(*) c from upload_parts where upload_id = '${stale.id}'`)[0].c, 0);
+  const again = await json(await startUpload(mom, { name: "abandoned.bin", size: data.length }));
+  assert.notEqual(again.id, stale.id);
+  assert.deepEqual(again.parts, [], "starting that file again begins cleanly");
 });

@@ -19,6 +19,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/uploads.ts` large resumable uploads (multipart), used for files over 8 MiB
 - `src/admin.ts` admin API (admins only: family list, access, storage use)
 - `src/versions.ts` new versions, history, restore (max 10 kept per file)
+- `src/cleanup.ts` nightly cron: purge old trash and abandoned uploads
 - `src/shares.ts` manage public links (signed in); `src/public.ts` the public `/s/<token>` pages (no sign-in, no scripts)
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan

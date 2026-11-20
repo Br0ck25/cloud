@@ -24,11 +24,12 @@ async function appCss(env: Env): Promise<string> {
   return css;
 }
 
-/** Is `id` the shared item itself or inside it, with nothing on the way trashed? */
-const inShare = (env: Env, root: number, id: number) =>
-  env.DB.prepare(
-    "with recursive up(id, parent_id) as (select id, parent_id from nodes where id = ? and trashed_at is null union all select n.id, n.parent_id from nodes n join up on n.id = up.parent_id where n.trashed_at is null) select 1 from up where id = ?",
-  ).bind(id, root).first();
+/** Is `id` the shared item or inside it, with nothing trashed anywhere on the way up to the top level (including above the shared item)? */
+const inShare = async (env: Env, root: number, id: number) =>
+  (await env.DB.prepare(
+    `with recursive up(id, parent_id) as (select id, parent_id from nodes where id = ? and trashed_at is null union all select n.id, n.parent_id from nodes n join up on n.id = up.parent_id where n.trashed_at is null)
+     select exists (select 1 from up where id = ?) and exists (select 1 from up where parent_id is null) as ok`,
+  ).bind(id, root).first<{ ok: number }>())?.ok === 1;
 
 export async function handlePublic(req: Request, env: Env, url: URL): Promise<Response> {
   const m = url.pathname.match(/^\/s\/([\w-]{16,64})(?:\/([dft])\/(\d+))?$/);

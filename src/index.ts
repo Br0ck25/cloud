@@ -5,6 +5,7 @@ import { handleShares } from "./shares";
 import { handlePublic } from "./public";
 import { handleAdmin } from "./admin";
 import { handleVersions } from "./versions";
+import { cleanup } from "./cleanup";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -22,5 +23,8 @@ export default {
       if (res) return res;
     }
     return new Response("Not found", { status: 404 });
+  },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(cleanup(env));
   },
 } satisfies ExportedHandler<Env>;
