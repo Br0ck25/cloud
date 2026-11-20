@@ -1,4 +1,4 @@
-const MAX = 320; // longest side in pixels
+const MAX = 480; // longest side in pixels: sharp enough for the grid on a 3x phone screen
 
 function toJpeg(src: CanvasImageSource, w: number, h: number): Promise<Blob | null> {
   const k = Math.min(1, MAX / Math.max(w, h));

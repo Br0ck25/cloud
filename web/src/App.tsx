@@ -9,12 +9,14 @@ import { Viewer } from "./Viewer";
 import { BackupSheet } from "./BackupSheet";
 import { clearInbox, readInbox } from "./inbox";
 import { Admin } from "./Admin";
+import { Photos } from "./Photos";
 import { AskSheet } from "./AskSheet";
 import type { Ask } from "./AskSheet";
 import { size } from "./format";
 
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
+const isMedia = (i: Item) => /^(image\/(?!svg)|video\/)/.test(i.mime ?? "");
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
 type Upload = { name: string; pct: number; file: File; dest?: number; error?: string };
@@ -35,6 +37,7 @@ export function App() {
   const hash = useHash();
   const inTrash = hash === "#/trash";
   const inAdmin = hash === "#/admin";
+  const inPhotos = hash === "#/photos";
   const folderId = folderOf(hash);
 
   const [me, setMe] = useState<{ id: number; email: string; role: string; backup_warning?: string | null } | null>(null);
@@ -54,13 +57,15 @@ export function App() {
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<Item[] | null>(null); // search results, or null when not searching
   const [tick, setTick] = useState(0); // bumped after changes so open search results refresh
+  const [view, setView] = useState<"grid" | "list" | null>(() => { try { const v = localStorage.getItem("view"); return v === "grid" || v === "list" ? v : null; } catch { return null; } }); // null = automatic
+  const chooseView = (v: "grid" | "list") => { setView(v); try { localStorage.setItem("view", v); } catch {} };
 
   const latest = useRef(0);
   // Reads the address at call time and ignores out-of-date answers, so a load that finishes after you moved elsewhere cannot overwrite the screen.
   const load = () => {
     const n = ++latest.current;
     const h = location.hash;
-    if (h === "#/admin") return Promise.resolve();
+    if (h === "#/admin" || h === "#/photos") return Promise.resolve();
     return (h === "#/trash" ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderOf(h)))
       .then((r) => { if (n === latest.current) { setParent(r.parent); setItems(r.items); setError(""); } })
       .catch((e) => { if (n === latest.current) setError(e.message); });
@@ -96,15 +101,33 @@ export function App() {
     awake?.release();
   }
 
+  const rows = found ?? items;
+  const files = rows.filter((i) => i.kind === "file");
+  // Automatic: a folder that is mostly photos and videos opens as a grid; the toggle next to the search box overrides it (and is remembered on this device).
+  const grid = !inTrash && !inAdmin && !inPhotos && !found && (view ? view === "grid" : files.length > 0 && files.filter(isMedia).length >= files.length * 0.6);
+  const openItem = (i: Item) => (canPreview(i) ? setOpen(i) : (location.href = api.fileUrl(i.id, true)));
+  const actions = (i: Item) => (
+    <details class="more"><summary aria-label="Actions">⋮</summary>
+      <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
+        <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
+        <button onClick={() => setMoving(i)}>Move</button>
+        <button onClick={() => setSharing(i)}>Share link</button>
+        {i.kind === "file" && <button onClick={() => setVersioning(i)}>Versions</button>}
+        {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
+        <button onClick={() => act(api.trash(i.id))}>Delete</button>
+      </div>
+    </details>
+  );
+
   const back = parent ? (parent.parent_id ? `#/f/${parent.parent_id}` : "#/") : "#/";
 
   return (
     <div class={drag ? "page drag" : "page"}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
       onDragLeave={() => setDrag(false)}
-      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash && !inAdmin) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
+      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash && !inAdmin && !inPhotos) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
       <header>
-        <h1>{inTrash || inAdmin ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : inAdmin ? "Admin" : parent ? parent.name : "Family Cloud"}</h1>
+        <h1>{inTrash || inAdmin || inPhotos ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : inAdmin ? "Admin" : inPhotos ? "Photos" : parent ? parent.name : "Family Cloud"}</h1>
         <details class="account">
           <summary class="who">{me?.email || "Account"}</summary>
           <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
@@ -114,20 +137,28 @@ export function App() {
         </details>
       </header>
 
-      {me?.backup_warning && !inAdmin && <a class="notice" href="#/admin">⚠ {me.backup_warning} Open Admin to check the backup.</a>}
+      {me?.backup_warning && !inAdmin && !inPhotos && <a class="notice" href="#/admin">⚠ {me.backup_warning} Open Admin to check the backup.</a>}
 
       {inAdmin && me && <Admin me={me.id} ask={setAsk} />}
 
-      {!inTrash && !inAdmin && (
+      {inPhotos && <Photos />}
+
+      {!inTrash && !inAdmin && !inPhotos && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
           {!folderId && <label class="btn">Back up photos<input type="file" multiple accept="image/*,video/*" hidden onChange={(e) => { const f = [...(e.currentTarget.files ?? [])]; e.currentTarget.value = ""; if (f.length) setBacking(f); }} /></label>}
           <button class="btn" onClick={() => setAsk({ title: "New folder", value: "", ok: (n) => act(api.mkdir(n, folderId)) })}>New folder</button>
+          <a class="btn" href="#/photos">Photos</a>
           <a class="btn" href="#/trash">Trash</a>
         </div>
       )}
 
-      {!inTrash && !inAdmin && <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />}
+      {!inTrash && !inAdmin && !inPhotos && (
+        <div class="searchrow">
+          <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+          {!found && <button class="btn sq" aria-label={grid ? "Show as a list" : "Show as a grid of pictures"} onClick={() => chooseView(grid ? "list" : "grid")}>{grid ? "☰" : "▦"}</button>}
+        </div>
+      )}
 
       {error && <p class="error">{error} <button class="btn" onClick={() => load()}>Retry</button> <button class="btn" onClick={() => location.reload()}>Reload</button></p>}
       {uploads.map((u) => (
@@ -138,34 +169,39 @@ export function App() {
         </div>
       ))}
 
-      {!inAdmin && <ul class="list">
-        {(found ?? items).map((i) => {
+      {grid && (
+        <div class="grid">
+          {rows.map((i) => (
+            <div class="cell" key={i.id}>
+              <a class="thumb" aria-label={i.name} href={i.kind === "folder" ? `#/f/${i.id}` : undefined} onClick={i.kind === "file" ? (e) => { e.preventDefault(); openItem(i); } : undefined}>
+                {i.thumb ? <img src={api.thumbUrl(i.id, i.updated_at)} alt="" loading="lazy" /> : <span class="glyph">{icon(i)}</span>}
+                {i.mime?.startsWith("video/") && <span class="badge">▶</span>}
+                {!i.thumb && <span class="cap">{i.name}</span>}
+              </a>
+              {!(i.shared === 1 && i.parent_id === null) && <span class="over">{actions(i)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {grid && !rows.length && !error && <p class="empty">Nothing here yet. Upload a file or drop it on this page.</p>}
+
+      {!inAdmin && !inPhotos && !grid && <ul class="list">
+        {rows.map((i) => {
           const locked = i.shared === 1 && i.parent_id === null;
           return (
             <li key={i.id}>
               {inTrash ? <span class="main"><Tile i={i} /><span class="name">{i.name}</span></span> : (
                 <a class="main" href={i.kind === "folder" ? `#/f/${i.id}` : undefined}
-                  onClick={i.kind === "file" ? (e) => { e.preventDefault(); canPreview(i) ? setOpen(i) : (location.href = api.fileUrl(i.id, true)); } : undefined}>
+                  onClick={i.kind === "file" ? (e) => { e.preventDefault(); openItem(i); } : undefined}>
                   <Tile i={i} /><span class="name">{i.name}</span>
                 </a>
               )}
               <span class="meta">{found ? `in ${i.folder ?? "My files"}` : locked ? "Shared" : `${size(i.size)} ${when(i.updated_at)}`}</span>
-              {inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && (
-                <details class="more"><summary aria-label="Actions">⋮</summary>
-                  <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
-                    <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
-                    <button onClick={() => setMoving(i)}>Move</button>
-                    <button onClick={() => setSharing(i)}>Share link</button>
-                    {i.kind === "file" && <button onClick={() => setVersioning(i)}>Versions</button>}
-                    {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
-                    <button onClick={() => act(api.trash(i.id))}>Delete</button>
-                  </div>
-                </details>
-              )}
+              {inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && actions(i)}
             </li>
           );
         })}
-        {!(found ?? items).length && !error && <li class="empty">{found ? `No matches for "${query.trim()}"` : inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
+        {!rows.length && !error && <li class="empty">{found ? `No matches for "${query.trim()}"` : inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
       </ul>}
 
       {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}
@@ -178,7 +214,7 @@ export function App() {
       {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 
-      {open && <Viewer items={(found ?? items).filter((i) => i.kind === "file" && canPreview(i))} current={open} onChange={setOpen} close={() => setOpen(null)} />}
+      {open && !inPhotos && <Viewer items={rows.filter((i) => i.kind === "file" && canPreview(i))} current={open} onChange={setOpen} close={() => setOpen(null)} />}
     </div>
   );
 }

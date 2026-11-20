@@ -644,3 +644,69 @@ test("backup: a copy deleted from the backup bucket is noticed and copied again"
   assert.equal((await runBackup()).repaired, 0, "and the next run is clean");
   assert.equal((await json(await mom("/api/me"))).backup_warning, null);
 });
+
+// ---- photos timeline ----
+const putTaken = async (f: typeof mom, name: string, taken: number | string | null, opts: { parent?: number; type?: string } = {}) =>
+  json(await f(`/api/files?name=${encodeURIComponent(name)}${opts.parent ? `&parent=${opts.parent}` : ""}${taken != null ? `&taken=${taken}` : ""}`, { method: "PUT", body: pattern(8), headers: { "content-type": opts.type ?? "image/png" } }));
+const photosOf = async (f: typeof mom, limit = 50) => {
+  const out: any[] = [];
+  let before = "";
+  for (let i = 0; i < 100; i++) {
+    const r = await json(await f(`/api/photos?limit=${limit}${before}`));
+    out.push(...r.items);
+    if (!r.next) return out;
+    before = `&before=${r.next}`;
+  }
+  throw new Error("never-ending pages");
+};
+
+test("photos: newest first by the date taken, paged without gaps, and only what you may see", async () => {
+  const T = 1_000_000_000; // September 2001: older than anything else the tests create
+  const now = Math.floor(Date.now() / 1000);
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const a = await putTaken(mom, "ph-a.png", T + 100);
+  await putTaken(mom, "ph-b.mp4", T + 200, { type: "video/mp4" });
+  await putTaken(mom, "ph-tie1.png", T + 50);
+  await putTaken(mom, "ph-tie2.png", T + 50); // same moment: the later upload comes first
+  await putTaken(mom, "ph-doc.txt", T + 300, { type: "text/plain" }); // not a photo or video
+  await putTaken(mom, "ph-vec.svg", T + 310, { type: "image/svg+xml" }); // can run scripts: never shown as a picture
+  const gone = await putTaken(mom, "ph-trashed.png", T + 320);
+  await mom(`/api/files/${gone.id}`, { method: "DELETE" });
+  const binned = await mkdir(mom, "ph-binned");
+  await putTaken(mom, "ph-infolder.png", T + 330, { parent: binned.id });
+  await mom(`/api/files/${binned.id}`, { method: "DELETE" });
+  await putTaken(dad, "ph-dad.png", T + 340); // dad's private photo
+  await putTaken(dad, "ph-fam.png", T + 350, { parent: family.id });
+  const garbage = await putTaken(mom, "ph-garbage.png", "abc"); // nonsense date: the upload time is used instead
+  const future = await putTaken(mom, "ph-future.png", now + 10 * 86400); // a phone with a wrong clock
+  assert.ok(Math.abs(garbage.taken_at - now) < 60 && Math.abs(future.taken_at - now) < 60, "bad dates fall back to the upload time");
+  assert.equal(a.taken_at, T + 100);
+
+  const mine = (await photosOf(mom)).filter((p) => p.name.startsWith("ph-"));
+  assert.deepEqual(mine.map((p) => p.name), ["ph-future.png", "ph-garbage.png", "ph-fam.png", "ph-b.mp4", "ph-a.png", "ph-tie2.png", "ph-tie1.png"],
+    "newest first; videos in, documents, SVG, trashed and trashed-folder items out, dad's private photo hidden, his Family photo shown");
+
+  assert.deepEqual((await photosOf(mom, 2)).map((p) => p.id), (await photosOf(mom, 200)).map((p) => p.id), "paging two at a time gives the same list as one big page");
+  const sorted = await photosOf(mom, 3);
+  assert.ok(sorted.every((p, i) => i === 0 || p.taken_at < sorted[i - 1].taken_at || (p.taken_at === sorted[i - 1].taken_at && p.id < sorted[i - 1].id)), "strictly ordered by (date taken, id)");
+  assert.equal(new Set(sorted.map((p) => p.id)).size, sorted.length, "no photo appears twice");
+
+  const his = (await photosOf(dad)).filter((p) => p.name.startsWith("ph-")).map((p) => p.name);
+  assert.ok(his.includes("ph-dad.png") && his.includes("ph-fam.png") && !his.includes("ph-a.png"), "dad sees his own and Family's, not mom's private photos");
+  assert.ok(!mine.some((p) => p.name === "ph-dad.png"));
+  const one = await json(await mom("/api/photos?limit=1"));
+  assert.equal(one.items.length, 1);
+  assert.match(one.next, /^\d+:\d+$/);
+});
+
+test("photos: the date taken also travels with large (multipart) uploads", async () => {
+  const data = pattern(9 * MiB);
+  const s = await json(await startUpload(mom, { name: "ph-big.bin", size: data.length, taken: 1_000_000_400 }));
+  await sendPart(mom, s.id, 1, data.slice(0, 8 * MiB));
+  await sendPart(mom, s.id, 2, data.slice(8 * MiB));
+  assert.equal((await json(await finish(mom, s.id))).taken_at, 1_000_000_400);
+  const s2 = await json(await startUpload(mom, { name: "ph-big2.bin", size: data.length, taken: "yesterday" }));
+  await sendPart(mom, s2.id, 1, data.slice(0, 8 * MiB));
+  await sendPart(mom, s2.id, 2, data.slice(8 * MiB));
+  assert.ok(Math.abs((await json(await finish(mom, s2.id))).taken_at - Date.now() / 1000) < 60, "a nonsense date falls back to the upload time here too");
+});

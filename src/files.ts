@@ -7,7 +7,7 @@ export type Node = {
 
 const MAX_THUMB = 300_000;
 const MAX_UPLOAD = 100_000_000; // Worker request bodies stop at ~100 MB; bigger files need multipart (milestone 5)
-const COLS = "id, parent_id, name, kind, size, mime, updated_at, owner_id is null as shared, thumb_key is not null as thumb";
+const COLS = "id, parent_id, name, kind, size, mime, updated_at, taken_at, owner_id is null as shared, thumb_key is not null as thumb";
 // Only types a browser cannot run code from may open inline; everything else downloads.
 const INLINE = /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/;
 
@@ -37,8 +37,14 @@ export async function guarded<T>(fn: () => Promise<T>): Promise<T | Response> {
   }
 }
 
-export const insertFile = (env: Env, p: { id: number | null; owner: number | null }, name: string, size: number, mime: string, key: string) =>
-  guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key, content_at) values (?, ?, ?, 'file', ?, ?, ?, unixepoch())").bind(p.id, p.owner, name, size, mime, key).run());
+/** The date a client says a photo was taken, in unix seconds; null if missing, nonsense or in the future (then the upload time is used). */
+export const takenParam = (v: unknown): number | null => {
+  const n = Number(v);
+  return v != null && Number.isInteger(n) && n > 0 && n <= Date.now() / 1000 + 86400 ? n : null;
+};
+
+export const insertFile = (env: Env, p: { id: number | null; owner: number | null }, name: string, size: number, mime: string, key: string, takenAt: number | null = null) =>
+  guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key, content_at, taken_at) values (?, ?, ?, 'file', ?, ?, ?, unixepoch(), coalesce(?, unixepoch()))").bind(p.id, p.owner, name, size, mime, key, takenAt).run());
 
 const isFamilyRoot = (n: Node) => n.parent_id === null && n.owner_id === null;
 
@@ -93,6 +99,23 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
     return Response.json({ items: results });
   }
 
+  // The Photos timeline: every photo and video you can see (yours and Family's), newest first by date taken, a page at a time.
+  if (pathname === "/api/photos" && req.method === "GET") {
+    const limit = Math.min(Math.max(Number(searchParams.get("limit")) || 120, 1), 200);
+    const cur = /^(\d+):(\d+)$/.exec(searchParams.get("before") ?? ""); // "<taken_at>:<id>" of the last item of the previous page
+    const { results } = await env.DB.prepare(
+      `with recursive dead(id) as (select id from nodes where trashed_at is not null union all select n.id from nodes n join dead on n.parent_id = dead.id)
+       select ${COLS} from nodes
+       where kind = 'file' and (mime like 'image/%' or mime like 'video/%') and mime != 'image/svg+xml'
+         and id not in (select id from dead) and (owner_id = ? or owner_id is null)
+         ${cur ? "and (taken_at < ? or (taken_at = ? and id < ?))" : ""}
+       order by taken_at desc, id desc limit ?`,
+    ).bind(...[user.id, ...(cur ? [Number(cur[1]), Number(cur[1]), Number(cur[2])] : []), limit + 1]).all<{ id: number; taken_at: number }>();
+    const items = results.slice(0, limit);
+    const last = items[items.length - 1];
+    return Response.json({ items, next: results.length > limit ? `${last.taken_at}:${last.id}` : null });
+  }
+
   if (pathname === "/api/search" && req.method === "GET") {
     const q = (searchParams.get("q") ?? "").trim();
     if (!q || q.length > 100) return err(400, "enter something to search for");
@@ -132,7 +155,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
       const mime = req.headers.get("content-type") || "application/octet-stream";
       const key = `blobs/${crypto.randomUUID()}`;
       await env.FILES.put(key, req.body, { httpMetadata: { contentType: mime } });
-      const r = await insertFile(env, p, name, size, mime, key);
+      const r = await insertFile(env, p, name, size, mime, key, takenParam(searchParams.get("taken")));
       if (r instanceof Response) { await env.FILES.delete(key); return r; }
       return Response.json(await item(env, r.meta.last_row_id), { status: 201 });
     }

@@ -1,12 +1,12 @@
 import type { User } from "./auth";
-import { err, cleanName, insertFile, item, parentOf } from "./files";
+import { err, cleanName, insertFile, item, parentOf, takenParam } from "./files";
 
 // R2 needs every part except the last to be the same size (and at least 5 MiB), so the server fixes the size.
 const PART_SIZE = 8 * 1024 * 1024;
 const MAX_SIZE = 50 * 1024 ** 3;
 const STALE = 6 * 86400; // R2 aborts unfinished multipart uploads after 7 days
 
-type Session = { id: string; blob_key: string; upload_id: string; size: number; name: string; mime: string; parent_id: number | null; owner_id: number | null; created_at: number };
+type Session = { id: string; blob_key: string; upload_id: string; size: number; name: string; mime: string; parent_id: number | null; owner_id: number | null; taken_at: number | null; created_at: number };
 
 const dropSession = (env: Env, id: string) =>
   env.DB.batch([env.DB.prepare("delete from upload_parts where upload_id = ?").bind(id), env.DB.prepare("delete from uploads where id = ?").bind(id)]);
@@ -22,7 +22,7 @@ export async function handleUploads(req: Request, env: Env, user: User, url: URL
 
   if (!id) {
     if (req.method !== "POST") return undefined;
-    const b = (await req.json().catch(() => ({}))) as { name?: string; parent?: number; size?: number; mime?: string };
+    const b = (await req.json().catch(() => ({}))) as { name?: string; parent?: number; size?: number; mime?: string; taken?: number };
     const name = cleanName(b.name);
     const size = b.size;
     if (!name) return err(400, "invalid name");
@@ -42,9 +42,9 @@ export async function handleUploads(req: Request, env: Env, user: User, url: URL
       const mime = b.mime || "application/octet-stream";
       const key = `blobs/${crypto.randomUUID()}`;
       const mp = await env.FILES.createMultipartUpload(key, { httpMetadata: { contentType: mime } });
-      s = { id: crypto.randomUUID(), blob_key: key, upload_id: mp.uploadId, size: size!, name, mime, parent_id: p.id, owner_id: p.owner, created_at: 0 };
-      await env.DB.prepare("insert into uploads (id, user_id, parent_id, owner_id, name, size, mime, blob_key, upload_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(s.id, user.id, p.id, p.owner, name, size, mime, key, mp.uploadId).run();
+      s = { id: crypto.randomUUID(), blob_key: key, upload_id: mp.uploadId, size: size!, name, mime, parent_id: p.id, owner_id: p.owner, taken_at: takenParam(b.taken), created_at: 0 };
+      await env.DB.prepare("insert into uploads (id, user_id, parent_id, owner_id, name, size, mime, blob_key, upload_id, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(s.id, user.id, p.id, p.owner, name, size, mime, key, mp.uploadId, s.taken_at).run();
     }
     return Response.json({ id: s.id, partSize: PART_SIZE, parts: (await doneParts(env, s.id)).map((r) => r.part) });
   }
@@ -68,7 +68,7 @@ export async function handleUploads(req: Request, env: Env, user: User, url: URL
     const parts = await doneParts(env, s.id);
     if (parts.length !== count) return err(409, `${count - parts.length} parts still missing`);
     await mp.complete(parts.map((r) => ({ partNumber: r.part, etag: r.etag })));
-    const r = await insertFile(env, { id: s.parent_id, owner: s.owner_id }, s.name, s.size, s.mime, s.blob_key);
+    const r = await insertFile(env, { id: s.parent_id, owner: s.owner_id }, s.name, s.size, s.mime, s.blob_key, s.taken_at);
     await dropSession(env, s.id);
     if (r instanceof Response) { await env.FILES.delete(s.blob_key); return r; }
     return Response.json(await item(env, r.meta.last_row_id), { status: 201 });

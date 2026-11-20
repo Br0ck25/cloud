@@ -1,6 +1,6 @@
 export type Item = {
   id: number; parent_id: number | null; name: string; kind: "file" | "folder";
-  size: number | null; mime: string | null; updated_at: number; shared: number; thumb: number; trashed_at?: number; folder?: string | null;
+  size: number | null; mime: string | null; updated_at: number; taken_at?: number; shared: number; thumb: number; trashed_at?: number; folder?: string | null;
 };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -22,6 +22,7 @@ export const addPerson = (email: string) => call("/api/admin/users", send("POST"
 export const editPerson = (id: number, patch: { role?: string; active?: boolean }) => call(`/api/admin/users/${id}`, send("PATCH", patch));
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
 export const search = (q: string) => call<{ items: Item[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.items);
+export const photos = (before?: string) => call<{ items: Item[]; next: string | null }>(`/api/photos${before ? `?before=${before}` : ""}`);
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call<Item>("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));
@@ -73,8 +74,9 @@ const SINGLE_MAX = 8 * 1024 * 1024; // up to one part: a single request; bigger 
 /** Uploads a file; picking the same file again after a failure or reload resumes where it stopped. */
 export async function upload(file: File, parent: number | undefined, onProgress: (fraction: number) => void): Promise<Item> {
   const mime = file.type || "application/octet-stream";
-  if (file.size <= SINGLE_MAX) return put<Item>(`/api/files?name=${encodeURIComponent(file.name)}${parent ? `&parent=${parent}` : ""}`, file, mime, onProgress);
-  const s = await call<{ id: string; partSize: number; parts: number[] }>("/api/uploads", send("POST", { name: file.name, parent, size: file.size, mime }));
+  const taken = Math.floor(file.lastModified / 1000); // the phone's own date for the photo; orders the Photos timeline
+  if (file.size <= SINGLE_MAX) return put<Item>(`/api/files?name=${encodeURIComponent(file.name)}${parent ? `&parent=${parent}` : ""}&taken=${taken}`, file, mime, onProgress);
+  const s = await call<{ id: string; partSize: number; parts: number[] }>("/api/uploads", send("POST", { name: file.name, parent, size: file.size, mime, taken }));
   const done = new Set(s.parts);
   for (let n = 1, start = 0; start < file.size; n++, start += s.partSize) {
     const part = file.slice(start, start + s.partSize);

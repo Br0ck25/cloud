@@ -5,7 +5,7 @@ import type { Item } from "./api";
 const SWIPE = 50; // sideways pixels that count as a swipe
 
 /** Full-screen preview that moves through `items` (the previewable files of the current list) by swipe, arrow keys or the ‹ › buttons. */
-export function Viewer({ items, current, onChange, close }: { items: Item[]; current: Item; onChange: (i: Item) => void; close: () => void }) {
+export function Viewer({ items, current, onChange, close, showFolder }: { items: Item[]; current: Item; onChange: (i: Item) => void; close: () => void; showFolder?: boolean }) {
   const at = items.findIndex((i) => i.id === current.id);
   const go = (step: number) => { const next = items[at + step]; if (at >= 0 && next) onChange(next); };
 
@@ -42,6 +42,7 @@ export function Viewer({ items, current, onChange, close }: { items: Item[]; cur
         <div class="vbar">
           <b>{current.name}</b>
           {at >= 0 && items.length > 1 && <span class="meta">{at + 1} / {items.length}</span>}
+          {showFolder && current.parent_id && <a class="btn" href={`#/f/${current.parent_id}`}>Folder</a>}
           <a class="btn" href={api.fileUrl(current.id, true)}>Download</a>
           <button class="btn" onClick={close}>Close</button>
         </div>
