@@ -3,9 +3,11 @@ export type Item = {
   size: number | null; mime: string | null; updated_at: number; taken_at?: number; shared: number; thumb: number; trashed_at?: number; folder?: string | null;
 };
 
+export class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText);
+  if (!res.ok) throw new HttpError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText, res.status);
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 const send = (method: string, body?: object): RequestInit => ({ method, body: body && JSON.stringify(body) });
@@ -23,6 +25,7 @@ export const editPerson = (id: number, patch: { role?: string; active?: boolean 
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
 export const search = (q: string) => call<{ items: Item[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.items);
 export const photos = (before?: string) => call<{ items: Item[]; next: string | null }>(`/api/photos${before ? `?before=${before}` : ""}`);
+export const purge = (ids?: number[]) => call<{ purged: number; remaining: number }>("/api/trash/purge", send("POST", ids ? { ids } : {}));
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
 export const mkdir = (name: string, parent?: number) => call<Item>("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));
@@ -51,7 +54,7 @@ function put<T>(url: string, body: Blob, type: string, onProgress: (fraction: nu
       if (x.status < 300) return resolve((x.responseText ? JSON.parse(x.responseText) : undefined) as T);
       let msg = `Upload failed (${x.status})`;
       try { msg = JSON.parse(x.responseText).error ?? msg; } catch {}
-      reject(new Error(msg));
+      reject(new HttpError(msg, x.status));
     };
     x.onerror = () => reject(new Error("Network error"));
     x.send(body);
@@ -84,4 +87,12 @@ export async function upload(file: File, parent: number | undefined, onProgress:
     onProgress((start + part.size) / file.size);
   }
   return retry(() => call<Item>(`/api/uploads/${s.id}/complete`, send("POST")));
+}
+
+/** Like `upload`, but if the name is taken the file is saved as "name (1).ext", "name (2).ext", and so on. */
+export async function uploadAvoidingClash(file: File, parent: number | undefined, onProgress: (fraction: number) => void): Promise<Item> {
+  for (let n = 0; ; n++) {
+    const f = n === 0 ? file : new File([file], file.name.replace(/(\.[^./]*)?$/, ` (${n})$1`), { type: file.type, lastModified: file.lastModified });
+    try { return await upload(f, parent, onProgress); } catch (e) { if ((e as HttpError).status !== 409 || n >= 20) throw e; }
+  }
 }

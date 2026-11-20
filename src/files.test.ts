@@ -710,3 +710,50 @@ test("photos: the date taken also travels with large (multipart) uploads", async
   await sendPart(mom, s2.id, 2, data.slice(8 * MiB));
   assert.ok(Math.abs((await json(await finish(mom, s2.id))).taken_at - Date.now() / 1000) < 60, "a nonsense date falls back to the upload time here too");
 });
+
+// ---- delete forever ----
+const purge = (f: typeof mom, body?: object) => f("/api/trash/purge", { method: "POST", body: JSON.stringify(body ?? {}) });
+const trashIds = async (f: typeof mom) => (await json(await f("/api/trash"))).items.map((i: any) => i.id) as number[];
+
+test("delete forever: chosen items go for good with their files, versions and links; everything else stays", async () => {
+  const doomed = await putFile(mom, "forever.png", pattern(40));
+  await newVersion(mom, doomed.id, pattern(30));
+  await mom(`/api/files/${doomed.id}/thumb`, { method: "PUT", body: new Uint8Array([0xff, 0xd8]), headers: { "content-type": "image/jpeg" } });
+  const link = await makeShare(mom, doomed.id);
+  const folder = await mkdir(mom, "ForeverFolder");
+  const inside = await putFile(mom, "inside-forever.png", pattern(20), folder.id);
+  const keeper = await putFile(mom, "stays-in-trash.png", pattern(15));
+  const keys = sql(`select blob_key k from nodes where id in (${doomed.id}, ${inside.id}) union select blob_key from versions where node_id = ${doomed.id}`).map((r) => r.k as string);
+  assert.equal(keys.length, 3);
+  for (const id of [doomed.id, folder.id, keeper.id]) assert.equal((await mom(`/api/files/${id}`, { method: "DELETE" })).status, 204);
+
+  assert.equal((await purge(mom, { ids: "all" })).status, 400);
+  assert.equal((await purge(mom, { ids: [1.5] })).status, 400);
+  assert.deepEqual(await json(await purge(mom, { ids: [] })), { purged: 0, remaining: (await trashIds(mom)).length }, "an empty list deletes nothing");
+  assert.ok(await trashIds(mom).then((t) => t.includes(keeper.id)));
+
+  const r = await json(await purge(mom, { ids: [doomed.id, folder.id, inside.id] })); // inside.id is not at the top of the trash: ignored
+  assert.equal(r.purged, 2);
+  assert.equal(sql(`select count(*) c from nodes where id in (${doomed.id}, ${folder.id}, ${inside.id})`)[0].c, 0, "the file, the folder and what was inside it are gone");
+  assert.equal(sql(`select count(*) c from versions where node_id = ${doomed.id}`)[0].c, 0);
+  assert.equal(sql(`select count(*) c from shares where node_id = ${doomed.id}`)[0].c, 0);
+  assert.ok(keys.every((k) => !inStorage(k)), "their stored files are deleted");
+  assert.equal((await pub(`/s/${link.token}`)).status, 404);
+  assert.ok((await trashIds(mom)).includes(keeper.id), "the item that was not chosen is still in the trash");
+});
+
+test("delete forever: only your own trash (and Family's); emptying takes everything", async () => {
+  const secret = await putFile(mom, "mom-trash.png", pattern(10));
+  await mom(`/api/files/${secret.id}`, { method: "DELETE" });
+  assert.equal((await json(await purge(dad, { ids: [secret.id] }))).purged, 0, "dad cannot delete mom's trashed file");
+  assert.ok((await trashIds(mom)).includes(secret.id));
+
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const shared = await putFile(mom, "family-trash.png", pattern(10), family.id);
+  await mom(`/api/files/${shared.id}`, { method: "DELETE" });
+  assert.equal((await json(await purge(dad, { ids: [shared.id] }))).purged, 1, "anyone in the family can empty Family's trash");
+
+  const all = await json(await purge(mom)); // no ids: everything of hers
+  assert.equal(all.remaining, 0);
+  assert.deepEqual(await trashIds(mom), []);
+});

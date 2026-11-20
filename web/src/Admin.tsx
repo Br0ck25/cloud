@@ -5,14 +5,14 @@ import type { Ask } from "./AskSheet";
 import { size } from "./format";
 
 /** Admin screen: who can sign in, and how much storage each person uses. */
-export function Admin({ me, ask }: { me: number; ask: (a: Ask) => void }) {
+export function Admin({ me, ask, backedUp }: { me: number; ask: (a: Ask) => void; backedUp: () => void }) {
   const [data, setData] = useState<{ users: Person[]; family_bytes: number; total_bytes: number; backup: Backup } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = () => api.admin().then(setData, (e) => setError(e.message));
   useEffect(() => { load(); }, []);
   const act = (p: Promise<unknown>) => p.then(load, (e) => setError(e.message));
-  const runBackup = () => { setBusy(true); setError(""); api.backupNow().then(() => load(), (e) => setError(e.message)).finally(() => setBusy(false)); };
+  const runBackup = () => { setBusy(true); setError(""); api.backupNow().then(() => { load(); backedUp(); }, (e) => setError(e.message)).finally(() => setBusy(false)); };
   if (error) return <p class="error">{error}</p>;
   if (!data) return null;
   const b = data.backup;

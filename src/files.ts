@@ -1,4 +1,5 @@
 import type { User } from "./auth";
+import { purgeNode } from "./cleanup";
 
 export type Node = {
   id: number; parent_id: number | null; owner_id: number | null; name: string; kind: "file" | "folder";
@@ -97,6 +98,19 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
        and (parent_id is null or exists (select 1 from nodes p where p.id = n.parent_id and p.trashed_at is null)) order by trashed_at desc`,
     ).bind(user.id).all();
     return Response.json({ items: results });
+  }
+
+  // Delete forever: only items at the top of the trash (not those inside a trashed folder), at most 100 per call. Without "ids" it means everything in the trash.
+  if (pathname === "/api/trash/purge" && req.method === "POST") {
+    const b = (await req.json().catch(() => ({}))) as { ids?: unknown };
+    if ("ids" in b && (!Array.isArray(b.ids) || !b.ids.every(Number.isInteger))) return err(400, "ids must be a list of numbers");
+    const ids = "ids" in b ? (b.ids as number[]).slice(0, 100) : null;
+    const top = "trashed_at is not null and (owner_id = ? or owner_id is null) and (parent_id is null or exists (select 1 from nodes p where p.id = nodes.parent_id and p.trashed_at is null))";
+    const pick = ids ? `and id in (${ids.map(() => "?").join(",")})` : "";
+    const { results } = ids && !ids.length ? { results: [] } : await env.DB.prepare(`select id from nodes where ${top} ${pick} order by trashed_at limit 100`).bind(user.id, ...(ids ?? [])).all<{ id: number }>();
+    for (const { id } of results) await purgeNode(env, id);
+    const left = await env.DB.prepare(`select count(*) c from nodes where ${top}`).bind(user.id).first<{ c: number }>();
+    return Response.json({ purged: results.length, remaining: left!.c });
   }
 
   // The Photos timeline: every photo and video you can see (yours and Family's), newest first by date taken, a page at a time.

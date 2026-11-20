@@ -15,7 +15,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
-- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/BackupSheet.tsx` phone photo backup, `src/Viewer.tsx` swipeable preview, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
+- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/BackupSheet.tsx` phone photo backup, `src/Viewer.tsx` swipeable preview, `src/selection.ts` + `SelectBar.tsx` picking items for bulk actions, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
 - `src/uploads.ts` large resumable uploads (multipart), used for files over 8 MiB
 - `src/admin.ts` admin API (admins only: family list, access, storage use)
 - `src/versions.ts` new versions, history, restore (max 10 kept per file)
@@ -29,6 +29,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `npm run dev` builds the UI, then runs the Worker with local R2/D1 (rebuild after UI edits)
 - `npm run build` builds `web/` into `dist/` (gitignored; CI builds before deploy)
 - `npm test` builds the UI, then runs all tests (`node --test`; API tests start a local Worker)
+- `npm run e2e` browser tests (`e2e/ui.mjs`): builds the UI and drives Chromium against a local Worker. Add a step there for every screen-level behaviour you add. If the browser is installed elsewhere: `CHROMIUM=/path/to/chrome npm run e2e`
 - Local login: put `DEV_EMAIL=you@example.com` and `ADMIN_EMAIL=you@example.com` in `.dev.vars` (gitignored), run `wrangler d1 migrations apply DB --local`
 - `npm run typecheck` regenerates binding types, then runs tsc
 - Bindings live in `wrangler.jsonc`; rerun typecheck after editing it

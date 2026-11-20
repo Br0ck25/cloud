@@ -8,7 +8,7 @@ type Keys = { blob_key: string | null; thumb_key: string | null };
 const SUBTREE = "with recursive sub(id) as (select id from nodes where id = ? union all select n.id from nodes n join sub on n.parent_id = sub.id)";
 
 /** Permanently removes one trashed item and everything under it. Storage goes first: if the database step fails, the next run retries; the other order would orphan files. */
-async function purgeNode(env: Env, id: number) {
+export async function purgeNode(env: Env, id: number) {
   const { results } = await env.DB.prepare(
     `${SUBTREE} select blob_key, thumb_key from nodes where id in (select id from sub) union all select blob_key, thumb_key from versions where node_id in (select id from sub)`,
   ).bind(id).all<Keys>();

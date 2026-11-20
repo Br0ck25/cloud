@@ -8,6 +8,11 @@ import { VersionsSheet } from "./VersionsSheet";
 import { Viewer } from "./Viewer";
 import { BackupSheet } from "./BackupSheet";
 import { clearInbox, readInbox } from "./inbox";
+import { SelectBar } from "./SelectBar";
+import { ConfirmSheet } from "./ConfirmSheet";
+import type { Confirm } from "./ConfirmSheet";
+import { emptyTrash, moveAll, purgeAll, report, restoreAll, trashAll } from "./bulk";
+import { longPress, useSelection } from "./selection";
 import { Admin } from "./Admin";
 import { Photos } from "./Photos";
 import { AskSheet } from "./AskSheet";
@@ -48,7 +53,11 @@ export function App() {
   const [open, setOpen] = useState<Item | null>(null);
   const [drag, setDrag] = useState(false);
   const [ask, setAsk] = useState<Ask | null>(null);
-  const [moving, setMoving] = useState<Item | null>(null);
+  const [moving, setMoving] = useState<Item[] | null>(null); // items being moved (one from the menu, or all the picked ones)
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [note, setNote] = useState(""); // result of a bulk action that partly failed
+  const selection = useSelection();
+  const { sel } = selection;
   const [sharing, setSharing] = useState<Item | null>(null);
   const [versioning, setVersioning] = useState<Item | null>(null);
   const [backing, setBacking] = useState<File[] | null>(null); // photos picked for "Back up photos"
@@ -76,7 +85,7 @@ export function App() {
   }, [hash]);
   useEffect(() => { api.me().then(setMe, () => {}); }, []);
 
-  useEffect(() => { setQuery(""); }, [hash]);
+  useEffect(() => { setQuery(""); selection.clear(); setNote(""); }, [hash]);
   useEffect(() => {
     if (!query.trim()) return setFound(null);
     const t = setTimeout(() => api.search(query.trim()).then(setFound, (e) => setError(e.message)), 250);
@@ -91,7 +100,7 @@ export function App() {
       const set = (u: Partial<Upload>) => setUploads((all) => all.map((x) => (x.name === f.name ? { ...x, ...u } : x)));
       setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0, file: f, dest }]);
       try {
-        const saved = await api.upload(f, dest, (p) => set({ pct: p }));
+        const saved = await api.uploadAvoidingClash(f, dest, (p) => set({ pct: p }));
         setUploads((all) => all.filter((x) => x.name !== f.name));
         await load();
         const jpeg = await makeThumb(f);
@@ -105,12 +114,22 @@ export function App() {
   const files = rows.filter((i) => i.kind === "file");
   // Automatic: a folder that is mostly photos and videos opens as a grid; the toggle next to the search box overrides it (and is remembered on this device).
   const grid = !inTrash && !inAdmin && !inPhotos && !found && (view ? view === "grid" : files.length > 0 && files.filter(isMedia).length >= files.length * 0.6);
+  const selectable = (i: Item) => !(i.shared === 1 && i.parent_id === null); // the Family folder itself cannot be changed
+  const chosen = rows.filter((i) => sel?.has(i.id));
+  const ids = chosen.map((i) => i.id);
+  const sameSpace = chosen.every((i) => (i.shared === 1) === (chosen[0].shared === 1)); // items cannot move between your files and Family
+  const bulk = async (run: Promise<string[]>, verb: string) => { const failed = await run; selection.clear(); setNote(report(failed, verb)); load(); setTick((t) => t + 1); };
+  // While picking, a tap ticks the item; otherwise it opens the folder or file.
+  const pick = (i: Item) => (e: Event) => {
+    if (sel) { e.preventDefault(); if (selectable(i)) selection.toggle(i.id); } else if (i.kind === "file") { e.preventDefault(); openItem(i); }
+  };
+  const holdToPick = (i: Item) => (selectable(i) && !inTrash ? longPress(() => selection.start(i.id)) : {});
   const openItem = (i: Item) => (canPreview(i) ? setOpen(i) : (location.href = api.fileUrl(i.id, true)));
   const actions = (i: Item) => (
     <details class="more"><summary aria-label="Actions">⋮</summary>
       <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
         <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
-        <button onClick={() => setMoving(i)}>Move</button>
+        <button onClick={() => setMoving([i])}>Move</button>
         <button onClick={() => setSharing(i)}>Share link</button>
         {i.kind === "file" && <button onClick={() => setVersioning(i)}>Versions</button>}
         {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
@@ -139,11 +158,27 @@ export function App() {
 
       {me?.backup_warning && !inAdmin && !inPhotos && <a class="notice" href="#/admin">⚠ {me.backup_warning} Open Admin to check the backup.</a>}
 
-      {inAdmin && me && <Admin me={me.id} ask={setAsk} />}
+      {inAdmin && me && <Admin me={me.id} ask={setAsk} backedUp={() => api.me().then(setMe, () => {})} />}
 
       {inPhotos && <Photos />}
 
-      {!inTrash && !inAdmin && !inPhotos && (
+      {sel && (
+        <SelectBar count={chosen.length} total={rows.filter(selectable).length} onAll={() => selection.all(rows.filter(selectable).map((i) => i.id))} onClear={selection.clear}
+          actions={inTrash
+            ? [{ label: "Restore", onClick: () => bulk(restoreAll(ids), "restored") },
+               { label: "Delete forever", danger: true, onClick: () => setConfirm({ title: `Delete ${ids.length} ${ids.length === 1 ? "item" : "items"} forever?`, message: "They cannot be recovered from the app afterwards.", action: "Delete forever", ok: () => bulk(purgeAll(ids), "deleted") }) }]
+            : [{ label: "Move", disabled: !sameSpace, onClick: () => setMoving(chosen) },
+               { label: "Delete", danger: true, onClick: () => bulk(trashAll(ids), "deleted") }]} />
+      )}
+
+      {inTrash && !sel && (
+        <div class="bar">
+          <button class="btn" disabled={!items.length} onClick={() => selection.start()}>Select</button>
+          <button class="btn danger" disabled={!items.length} onClick={() => setConfirm({ title: "Empty the trash?", message: `Everything in the trash (${items.length} ${items.length === 1 ? "item" : "items"}) is deleted for good and cannot be recovered from the app.`, action: "Empty trash", ok: () => bulk(emptyTrash(), "deleted") })}>Empty trash</button>
+        </div>
+      )}
+
+      {!inTrash && !inAdmin && !inPhotos && !sel && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
           {!folderId && <label class="btn">Back up photos<input type="file" multiple accept="image/*,video/*" hidden onChange={(e) => { const f = [...(e.currentTarget.files ?? [])]; e.currentTarget.value = ""; if (f.length) setBacking(f); }} /></label>}
@@ -153,13 +188,15 @@ export function App() {
         </div>
       )}
 
-      {!inTrash && !inAdmin && !inPhotos && (
+      {!inTrash && !inAdmin && !inPhotos && !sel && (
         <div class="searchrow">
           <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+          {rows.length > 0 && <button class="btn" onClick={() => selection.start()}>Select</button>}
           {!found && <button class="btn sq" aria-label={grid ? "Show as a list" : "Show as a grid of pictures"} onClick={() => chooseView(grid ? "list" : "grid")}>{grid ? "☰" : "▦"}</button>}
         </div>
       )}
 
+      {note && <p class="notice" role="status" onClick={() => setNote("")}>{note}</p>}
       {error && <p class="error">{error} <button class="btn" onClick={() => load()}>Retry</button> <button class="btn" onClick={() => location.reload()}>Reload</button></p>}
       {uploads.map((u) => (
         <div class="upload" key={u.name}>
@@ -172,13 +209,14 @@ export function App() {
       {grid && (
         <div class="grid">
           {rows.map((i) => (
-            <div class="cell" key={i.id}>
-              <a class="thumb" aria-label={i.name} href={i.kind === "folder" ? `#/f/${i.id}` : undefined} onClick={i.kind === "file" ? (e) => { e.preventDefault(); openItem(i); } : undefined}>
+            <div class={sel?.has(i.id) ? "cell picked" : "cell"} key={i.id}>
+              <a class="thumb" aria-label={i.name} href={i.kind === "folder" ? `#/f/${i.id}` : undefined} onClick={pick(i)} {...holdToPick(i)}>
                 {i.thumb ? <img src={api.thumbUrl(i.id, i.updated_at)} alt="" loading="lazy" /> : <span class="glyph">{icon(i)}</span>}
                 {i.mime?.startsWith("video/") && <span class="badge">▶</span>}
                 {!i.thumb && <span class="cap">{i.name}</span>}
               </a>
-              {!(i.shared === 1 && i.parent_id === null) && <span class="over">{actions(i)}</span>}
+              {sel && selectable(i) && <span class="tick">{sel.has(i.id) ? "✓" : ""}</span>}
+              {!sel && selectable(i) && <span class="over">{actions(i)}</span>}
             </div>
           ))}
         </div>
@@ -189,23 +227,24 @@ export function App() {
         {rows.map((i) => {
           const locked = i.shared === 1 && i.parent_id === null;
           return (
-            <li key={i.id}>
-              {inTrash ? <span class="main"><Tile i={i} /><span class="name">{i.name}</span></span> : (
-                <a class="main" href={i.kind === "folder" ? `#/f/${i.id}` : undefined}
-                  onClick={i.kind === "file" ? (e) => { e.preventDefault(); openItem(i); } : undefined}>
+            <li key={i.id} class={sel?.has(i.id) ? "picked" : ""}>
+              {sel && <button class="check" aria-label={`Select ${i.name}`} aria-pressed={sel.has(i.id)} disabled={!selectable(i)} onClick={() => selection.toggle(i.id)}>{sel.has(i.id) ? "✓" : ""}</button>}
+              {inTrash ? <span class="main" onClick={sel ? () => selection.toggle(i.id) : undefined}><Tile i={i} /><span class="name">{i.name}</span></span> : (
+                <a class="main" href={i.kind === "folder" ? `#/f/${i.id}` : undefined} onClick={pick(i)} {...holdToPick(i)}>
                   <Tile i={i} /><span class="name">{i.name}</span>
                 </a>
               )}
               <span class="meta">{found ? `in ${i.folder ?? "My files"}` : locked ? "Shared" : `${size(i.size)} ${when(i.updated_at)}`}</span>
-              {inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && actions(i)}
+              {!sel && (inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && actions(i))}
             </li>
           );
         })}
         {!rows.length && !error && <li class="empty">{found ? `No matches for "${query.trim()}"` : inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
       </ul>}
 
-      {moving && <Picker title={`Move "${moving.name}"`} action="Move here" shared={moving.shared === 1} start={moving.parent_id ?? undefined} hide={moving.id}
-        ok={(to) => act(api.move(moving.id, to ?? null))} close={() => setMoving(null)} />}
+      {moving && <Picker title={moving.length === 1 ? `Move "${moving[0].name}"` : `Move ${moving.length} items`} action="Move here" shared={moving[0].shared === 1} start={moving[0].parent_id ?? undefined} hide={moving.map((i) => i.id)}
+        ok={(to) => bulk(moveAll(moving.map((i) => i.id), to ?? null), "moved")} close={() => setMoving(null)} />}
+      {confirm && <ConfirmSheet confirm={confirm} close={() => setConfirm(null)} />}
       {inbox && <Picker title={`Save ${inbox.length} shared ${inbox.length === 1 ? "file" : "files"}`} action="Save here"
         ok={(to) => { saving.current = true; location.hash = to ? `#/f/${to}` : "#/"; addFiles(inbox, to).then(clearInbox); }}
         close={() => { setInbox(null); if (!saving.current) { clearInbox(); if (location.hash === "#/share") location.hash = "#/"; } saving.current = false; }} />}

@@ -4,12 +4,12 @@ import type { Item } from "./api";
 
 /** Sheet for choosing a destination folder. `shared` limits it to one space (your files or Family), since moved items cannot cross; leave it out to browse both. */
 export function Picker({ title, action, shared, start, hide, ok, close }: {
-  title: string; action: string; shared?: boolean; start?: number; hide?: number; ok: (folder: number | undefined) => void; close: () => void;
+  title: string; action: string; shared?: boolean; start?: number; hide?: number[]; ok: (folder: number | undefined) => void; close: () => void;
 }) {
   const [at, setAt] = useState(start);
   const [data, setData] = useState<{ parent: Item | null; items: Item[] }>({ parent: null, items: [] });
   useEffect(() => { api.list(at).then(setData, () => {}); }, [at]);
-  const folders = data.items.filter((i) => i.kind === "folder" && (shared === undefined || (i.shared === 1) === shared) && i.id !== hide);
+  const folders = data.items.filter((i) => i.kind === "folder" && (shared === undefined || (i.shared === 1) === shared) && !hide?.includes(i.id));
   const canUp = data.parent !== null && !(shared === true && data.parent.parent_id === null); // Family's own top level is the floor for shared items
   return (
     <div class="modal" onClick={close}>
