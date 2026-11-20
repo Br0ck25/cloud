@@ -1,6 +1,7 @@
 # Plan: family Google Drive replacement on Cloudflare
 
 ## Scope (decided)
+- Domain: `cloud.brocksville.com` (Worker custom domain + Access app on the same hostname).
 - Personal project for a few family members (~5 users). Not multi-tenant, no signup flow, no billing.
 - Web only, delivered as an installable **PWA** (phone home-screen + desktop). No native or sync clients.
 - v1 = files, folders, sharing, search, trash, phone photo/file upload. No in-browser document editing.
@@ -45,6 +46,5 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
 
 ## Remaining questions (defaults in bold, I will proceed with these)
 - Login method: **Google login plus email one-time PIN** (family members without Google can still get in).
-- Do you have a domain on Cloudflare to use? **If not, use the free `*.workers.dev` URL; Access works with it.**
 - Per-user storage limits: **none**, just watch the R2 bill (first 10 GB free, then ~$0.015/GB-month).
 - Does anyone need iPhone support? **Yes assumed; hence the in-app picker rather than relying on Share Target.**
