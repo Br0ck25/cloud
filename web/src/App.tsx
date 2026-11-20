@@ -4,6 +4,7 @@ import type { Item } from "./api";
 import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
 import { ShareSheet } from "./ShareSheet";
+import { VersionsSheet } from "./VersionsSheet";
 import { clearInbox, readInbox } from "./inbox";
 import { Admin } from "./Admin";
 import { AskSheet } from "./AskSheet";
@@ -16,7 +17,7 @@ const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/p
 
 type Upload = { name: string; pct: number; file: File; dest?: number; error?: string };
 const folderOf = (hash: string) => { const m = /^#\/f\/(\d+)$/.exec(hash); return m ? Number(m[1]) : undefined; };
-const Tile = ({ i }: { i: Item }) => <span class="tile">{i.thumb ? <img src={api.thumbUrl(i.id)} alt="" loading="lazy" /> : icon(i)}</span>;
+const Tile = ({ i }: { i: Item }) => <span class="tile">{i.thumb ? <img src={api.thumbUrl(i.id, i.updated_at)} alt="" loading="lazy" /> : icon(i)}</span>;
 
 function useHash() {
   const [hash, setHash] = useState(location.hash);
@@ -44,6 +45,7 @@ export function App() {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [moving, setMoving] = useState<Item | null>(null);
   const [sharing, setSharing] = useState<Item | null>(null);
+  const [versioning, setVersioning] = useState<Item | null>(null);
   const [inbox, setInbox] = useState<File[] | null>(null); // files shared into the app from the phone's Share sheet
   const saving = useRef(false);
   const [query, setQuery] = useState("");
@@ -148,6 +150,7 @@ export function App() {
                     <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
                     <button onClick={() => setMoving(i)}>Move</button>
                     <button onClick={() => setSharing(i)}>Share link</button>
+                    {i.kind === "file" && <button onClick={() => setVersioning(i)}>Versions</button>}
                     {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
                     <button onClick={() => act(api.trash(i.id))}>Delete</button>
                   </div>
@@ -164,6 +167,7 @@ export function App() {
       {inbox && <Picker title={`Save ${inbox.length} shared ${inbox.length === 1 ? "file" : "files"}`} action="Save here"
         ok={(to) => { saving.current = true; location.hash = to ? `#/f/${to}` : "#/"; addFiles(inbox, to).then(clearInbox); }}
         close={() => { setInbox(null); if (!saving.current) { clearInbox(); if (location.hash === "#/share") location.hash = "#/"; } saving.current = false; }} />}
+      {versioning && <VersionsSheet item={versioning} changed={() => act(Promise.resolve())} close={() => setVersioning(null)} />}
       {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 

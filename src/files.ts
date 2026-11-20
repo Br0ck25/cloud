@@ -2,7 +2,7 @@ import type { User } from "./auth";
 
 export type Node = {
   id: number; parent_id: number | null; owner_id: number | null; name: string; kind: "file" | "folder";
-  size: number | null; mime: string | null; blob_key: string | null; thumb_key: string | null; trashed_at: number | null;
+  size: number | null; mime: string | null; blob_key: string | null; thumb_key: string | null; content_at: number; trashed_at: number | null;
 };
 
 const MAX_THUMB = 300_000;
@@ -38,7 +38,7 @@ export async function guarded<T>(fn: () => Promise<T>): Promise<T | Response> {
 }
 
 export const insertFile = (env: Env, p: { id: number | null; owner: number | null }, name: string, size: number, mime: string, key: string) =>
-  guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key) values (?, ?, ?, 'file', ?, ?, ?)").bind(p.id, p.owner, name, size, mime, key).run());
+  guarded(() => env.DB.prepare("insert into nodes (parent_id, owner_id, name, kind, size, mime, blob_key, content_at) values (?, ?, ?, 'file', ?, ?, ?, unixepoch())").bind(p.id, p.owner, name, size, mime, key).run());
 
 const isFamilyRoot = (n: Node) => n.parent_id === null && n.owner_id === null;
 

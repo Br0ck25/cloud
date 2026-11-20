@@ -27,9 +27,13 @@ export const move = (id: number, parent: number | null) => call(`/api/files/${id
 export const shares = (node: number) => call<{ items: Share[] }>(`/api/shares?node=${node}`).then((r) => r.items);
 export const createShare = (node: number, days: number | null) => call<Share>("/api/shares", send("POST", { node, days }));
 export const revokeShare = (id: number) => call(`/api/shares/${id}`, send("DELETE"));
+export type Version = { id: number; size: number; mime: string; content_at: number };
+export const versions = (id: number) => call<{ current: { size: number; content_at: number }; items: Version[] }>(`/api/files/${id}/versions`);
+export const restoreVersion = (id: number, version: number) => call(`/api/files/${id}/versions/${version}/restore`, send("POST"));
+export const versionUrl = (id: number, version: number) => `/api/files/${id}/versions/${version}`;
 export const trash = (id: number) => call(`/api/files/${id}`, send("DELETE"));
 export const restore = (id: number) => call(`/api/files/${id}/restore`, send("POST"));
-export const thumbUrl = (id: number) => `/api/files/${id}/thumb`;
+export const thumbUrl = (id: number, changed: number) => `/api/files/${id}/thumb?v=${changed}`; // the address changes with the file, so a new version never shows the old picture
 export const putThumb = (id: number, jpeg: Blob) => fetch(`/api/files/${id}/thumb`, { method: "PUT", body: jpeg, headers: { "content-type": "image/jpeg" } });
 export const fileUrl = (id: number, download = false) => `/api/files/${id}${download ? "?download=1" : ""}`;
 
@@ -59,6 +63,8 @@ async function retry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
     }
   }
 }
+
+export const uploadVersion = (id: number, file: File, onProgress: (fraction: number) => void) => put<Item>(`/api/files/${id}/content`, file, file.type || "application/octet-stream", onProgress);
 
 const SINGLE_MAX = 8 * 1024 * 1024; // up to one part: a single request; bigger files go in parts the server can resume
 

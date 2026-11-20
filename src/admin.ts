@@ -4,7 +4,7 @@ import { err } from "./files";
 type Person = { id: number; email: string; role: "admin" | "member"; active: number; bytes: number };
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const PERSON = "select u.id, u.email, u.role, u.active, coalesce((select sum(size) from nodes n where n.owner_id = u.id), 0) as bytes from users u";
+const PERSON = "select u.id, u.email, u.role, u.active, coalesce((select sum(size) from nodes n where n.owner_id = u.id), 0) + coalesce((select sum(v.size) from versions v join nodes n on n.id = v.node_id where n.owner_id = u.id), 0) as bytes from users u";
 
 /** Family list and storage use. Admins only. Removing someone turns their access off; their files stay. */
 export async function handleAdmin(req: Request, env: Env, user: User, url: URL): Promise<Response | undefined> {
@@ -14,7 +14,7 @@ export async function handleAdmin(req: Request, env: Env, user: User, url: URL):
 
   if (!m[1] && req.method === "GET") {
     const { results } = await env.DB.prepare(`${PERSON} order by u.id`).all<Person>();
-    const family = await env.DB.prepare("select coalesce(sum(size), 0) as b from nodes where owner_id is null").first<{ b: number }>();
+    const family = await env.DB.prepare("select coalesce(sum(size), 0) + coalesce((select sum(v.size) from versions v join nodes n on n.id = v.node_id where n.owner_id is null), 0) as b from nodes where owner_id is null").first<{ b: number }>();
     return Response.json({ users: results, family_bytes: family!.b, total_bytes: results.reduce((t, u) => t + u.bytes, family!.b) });
   }
 

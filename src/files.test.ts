@@ -378,3 +378,75 @@ test("search finds names anywhere you can see, and nothing you cannot", async ()
   await mom(`/api/files/${deep.id}/restore`, { method: "POST" });
   assert.ok((await find(mom, "quokka")).some((h: any) => h.id === a.id));
 });
+
+// ---- versions ----
+const newVersion = (f: typeof mom, id: number, data: Uint8Array, type = "image/png") => f(`/api/files/${id}/content`, { method: "PUT", body: data, headers: { "content-type": type } });
+const versionsOf = async (f: typeof mom, id: number) => json(await f(`/api/files/${id}/versions`));
+const sql = (q: string) => JSON.parse(wrangler("d1", "execute", "DB", "--local", "--persist-to", dir, "--json", "--command", q).toString())[0].results as any[];
+
+test("versions: new content keeps the old as history and any version can be restored", async () => {
+  const A = pattern(3000), B = pattern(5000).reverse(), C = new Uint8Array([1, 2, 3]);
+  const f = await putFile(mom, "report.png", A);
+  assert.deepEqual((await versionsOf(mom, f.id)).items, []);
+  await mom(`/api/files/${f.id}/thumb`, { method: "PUT", body: new Uint8Array([0xff, 0xd8]), headers: { "content-type": "image/jpeg" } });
+  assert.equal((await json(await mom(`/api/files`))).items.find((i: any) => i.id === f.id).thumb, 1);
+
+  const v2 = await json(await newVersion(mom, f.id, B));
+  assert.equal(v2.size, 5000);
+  assert.equal(v2.name, "report.png"); // same file: name, place and id unchanged
+  assert.equal(v2.thumb, 0); // the new content needs its own thumbnail
+  assert.deepEqual(await bytesOf(mom, f.id), B);
+  const list = await versionsOf(mom, f.id);
+  assert.equal(list.items.length, 1);
+  assert.equal(list.items[0].size, 3000);
+  assert.equal(list.current.size, 5000);
+  const old = await mom(`/api/files/${f.id}/versions/${list.items[0].id}`);
+  assert.match(old.headers.get("content-disposition")!, /^attachment/);
+  assert.deepEqual(new Uint8Array(await old.arrayBuffer()), A); // the old bytes are still downloadable
+
+  const back = await json(await mom(`/api/files/${f.id}/versions/${list.items[0].id}/restore`, { method: "POST" }));
+  assert.equal(back.size, 3000);
+  assert.equal(back.thumb, 1); // the restored content gets its thumbnail back
+  assert.deepEqual(await bytesOf(mom, f.id), A);
+  const after = await versionsOf(mom, f.id);
+  assert.deepEqual(after.items.map((v: any) => v.size), [5000]); // what we replaced is now the history entry: restoring is undoable
+  assert.equal((await mom(`/api/files/${f.id}/versions/${list.items[0].id}`)).status, 404); // the restored entry left the list
+
+  await newVersion(mom, f.id, C);
+  assert.deepEqual((await versionsOf(mom, f.id)).items.map((v: any) => v.size), [3000, 5000]);
+});
+
+test("versions: only the last 10 are kept and old ones are removed from storage", async () => {
+  const f = await putFile(mom, "many.png", new Uint8Array([0]));
+  const firstBlob = sql(`select blob_key k from nodes where id = ${f.id}`)[0].k;
+  for (let i = 1; i <= 12; i++) await newVersion(mom, f.id, new Uint8Array(i));
+  const kept = (await versionsOf(mom, f.id)).items;
+  assert.equal(kept.length, 10);
+  assert.deepEqual(kept.map((v: any) => v.size), [11, 10, 9, 8, 7, 6, 5, 4, 3, 2]); // newest first; the two oldest were dropped
+  assert.equal(sql(`select count(*) c from versions where node_id = ${f.id}`)[0].c, 10);
+  // the dropped blobs must be gone from R2 too, not only from the table
+  const r2get = (key: string) => wrangler("r2", "object", "get", `cloud-files/${key}`, "--local", "--persist-to", dir, "--pipe");
+  assert.throws(() => r2get(firstBlob), "the original content was pruned from storage");
+  const keptKey = sql(`select blob_key k from versions where node_id = ${f.id} order by id desc limit 1`)[0].k;
+  assert.doesNotThrow(() => r2get(keptKey), "a kept version is still in storage");
+});
+
+test("versions: who may use them, and what they cost", async () => {
+  const f = await putFile(mom, "private-v.png", pattern(10));
+  assert.equal((await newVersion(dad, f.id, pattern(5))).status, 404); // dad cannot touch mom's private file
+  assert.equal((await dad(`/api/files/${f.id}/versions`)).status, 404);
+  const folder = await mkdir(mom, "VersionsFolder");
+  assert.equal((await newVersion(mom, folder.id, pattern(5))).status, 400); // only files have versions
+  assert.equal((await mom(`/api/files/${f.id}/content`, { method: "PUT", body: pattern(5), headers: { "content-type": "image/png", "content-length": "5" } })).status, 200);
+
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const shared = await putFile(mom, "shared-v.png", new Uint8Array(1000), family.id);
+  const before = (await json(await mom("/api/admin"))).family_bytes;
+  assert.equal((await newVersion(dad, shared.id, new Uint8Array(400))).status, 200); // anyone in the family can version a Family file
+  const afterBytes = (await json(await mom("/api/admin"))).family_bytes;
+  assert.equal(afterBytes - before, 400, "storage now counts 1000 (kept as a version) + 400 (current) instead of 1000");
+
+  await mom(`/api/files/${shared.id}`, { method: "DELETE" });
+  assert.equal((await newVersion(mom, shared.id, pattern(5))).status, 404); // trashed files are frozen
+  assert.equal((await mom(`/api/files/${shared.id}/versions`)).status, 404);
+});

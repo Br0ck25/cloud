@@ -48,6 +48,8 @@ progress { width: 40%; accent-color: var(--brand); }
 .sheet input { font: inherit; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
 .sheet input:focus { outline: 2px solid var(--brand); border-color: transparent; }
 .picker { max-height: 45vh; overflow: auto; }
+.stack { display: grid; min-width: 0; }
+.sheet .list .btn { min-height: 36px; padding: 0 12px; }
 .wrap { white-space: normal; margin: 0; }
 .sheet select { font: inherit; flex: 1; min-height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
 .crumb { display: flex; align-items: center; gap: 10px; }
