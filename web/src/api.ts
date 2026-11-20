@@ -23,7 +23,7 @@ export const editPerson = (id: number, patch: { role?: string; active?: boolean 
 export const list = (parent?: number) => call<{ parent: Item | null; items: Item[] }>(`/api/files${parent ? `?parent=${parent}` : ""}`);
 export const search = (q: string) => call<{ items: Item[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.items);
 export const trashed = () => call<{ items: Item[] }>("/api/trash");
-export const mkdir = (name: string, parent?: number) => call("/api/folders", send("POST", { name, parent }));
+export const mkdir = (name: string, parent?: number) => call<Item>("/api/folders", send("POST", { name, parent }));
 export const rename = (id: number, name: string) => call(`/api/files/${id}`, send("PATCH", { name }));
 export const move = (id: number, parent: number | null) => call(`/api/files/${id}`, send("PATCH", { parent }));
 export const shares = (node: number) => call<{ items: Share[] }>(`/api/shares?node=${node}`).then((r) => r.items);
@@ -57,7 +57,7 @@ function put<T>(url: string, body: Blob, type: string, onProgress: (fraction: nu
   });
 }
 
-async function retry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
+export async function retry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
   for (let i = 1; ; i++) {
     try { return await fn(); } catch (e) {
       if (i >= tries) throw e;

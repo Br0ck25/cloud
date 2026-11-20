@@ -15,7 +15,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
-- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
+- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/BackupSheet.tsx` phone photo backup, `src/style.css` theme tokens (all colors live only there; read `docs/DESIGN.md` before touching any UI), `public/` manifest, service worker, icons
 - `src/uploads.ts` large resumable uploads (multipart), used for files over 8 MiB
 - `src/admin.ts` admin API (admins only: family list, access, storage use)
 - `src/versions.ts` new versions, history, restore (max 10 kept per file)

@@ -5,6 +5,7 @@ import { makeThumb } from "./thumb";
 import { Picker } from "./Picker";
 import { ShareSheet } from "./ShareSheet";
 import { VersionsSheet } from "./VersionsSheet";
+import { BackupSheet } from "./BackupSheet";
 import { clearInbox, readInbox } from "./inbox";
 import { Admin } from "./Admin";
 import { AskSheet } from "./AskSheet";
@@ -46,6 +47,7 @@ export function App() {
   const [moving, setMoving] = useState<Item | null>(null);
   const [sharing, setSharing] = useState<Item | null>(null);
   const [versioning, setVersioning] = useState<Item | null>(null);
+  const [backing, setBacking] = useState<File[] | null>(null); // photos picked for "Back up photos"
   const [inbox, setInbox] = useState<File[] | null>(null); // files shared into the app from the phone's Share sheet
   const saving = useRef(false);
   const [query, setQuery] = useState("");
@@ -116,6 +118,7 @@ export function App() {
       {!inTrash && !inAdmin && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
+          {!folderId && <label class="btn">Back up photos<input type="file" multiple accept="image/*,video/*" hidden onChange={(e) => { const f = [...(e.currentTarget.files ?? [])]; e.currentTarget.value = ""; if (f.length) setBacking(f); }} /></label>}
           <button class="btn" onClick={() => setAsk({ title: "New folder", value: "", ok: (n) => act(api.mkdir(n, folderId)) })}>New folder</button>
           <a class="btn" href="#/trash">Trash</a>
         </div>
@@ -167,6 +170,7 @@ export function App() {
       {inbox && <Picker title={`Save ${inbox.length} shared ${inbox.length === 1 ? "file" : "files"}`} action="Save here"
         ok={(to) => { saving.current = true; location.hash = to ? `#/f/${to}` : "#/"; addFiles(inbox, to).then(clearInbox); }}
         close={() => { setInbox(null); if (!saving.current) { clearInbox(); if (location.hash === "#/share") location.hash = "#/"; } saving.current = false; }} />}
+      {backing && <BackupSheet files={backing} changed={() => act(Promise.resolve())} close={() => setBacking(null)} />}
       {versioning && <VersionsSheet item={versioning} changed={() => act(Promise.resolve())} close={() => setVersioning(null)} />}
       {sharing && <ShareSheet item={sharing} close={() => setSharing(null)} />}
       {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
