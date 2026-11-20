@@ -3,13 +3,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "npm run build && wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "wrangler types && tsc --noEmit",
-    "test": "node --test --test-concurrency=1 src/*.test.ts"
+    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p web",
+    "test": "npm run build && node --test --test-concurrency=1 src/*.test.ts",
+    "build": "vite build"
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
     "typescript": "^5",
+    "vite": "^8.3.8",
     "wrangler": "^4"
+  },
+  "dependencies": {
+    "preact": "^11.2.0"
   }
 }

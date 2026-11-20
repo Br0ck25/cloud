@@ -15,11 +15,13 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
+- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `public/` manifest, service worker, icons
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan
 
 ## Commands
-- `npm run dev` local Worker with local R2/D1
+- `npm run dev` builds the UI, then runs the Worker with local R2/D1 (rebuild after UI edits)
+- `npm run build` builds `web/` into `dist/` (gitignored; CI builds before deploy)
 - `npm test` unit tests (`node --test`)
 - Local login: put `DEV_EMAIL=you@example.com` and `ADMIN_EMAIL=you@example.com` in `.dev.vars` (gitignored), run `wrangler d1 migrations apply DB --local`
 - `npm run typecheck` regenerates binding types, then runs tsc

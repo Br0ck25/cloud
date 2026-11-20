@@ -33,5 +33,6 @@ jobs:
           npx wrangler d1 create cloud || true
           ID=$(npx wrangler d1 list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).find(d=>d.name==="cloud").uuid))')
           sed -i "s/REPLACE_DB_ID/$ID/" wrangler.jsonc
+      - run: npm run build
       - run: npx wrangler d1 migrations apply DB --remote
       - run: npx wrangler deploy --var ADMIN_EMAIL:${{ secrets.ADMIN_EMAIL }}
