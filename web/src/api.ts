@@ -34,6 +34,8 @@ export const rename = (id: number, name: string) => call(`/api/files/${id}`, sen
 export const move = (id: number, parent: number | null) => call(`/api/files/${id}`, send("PATCH", { parent }));
 export const shares = (node: number) => call<{ items: Share[] }>(`/api/shares?node=${node}`).then((r) => r.items);
 export const createShare = (node: number, days: number | null) => call<Share>("/api/shares", send("POST", { node, days }));
+export type LinkRow = Share & { node_id: number; name: string; kind: "file" | "folder"; mime: string | null; made_by: string };
+export const allShares = () => call<{ items: LinkRow[] }>("/api/shares/all").then((r) => r.items);
 export const revokeShare = (id: number) => call(`/api/shares/${id}`, send("DELETE"));
 export type Version = { id: number; size: number; mime: string; content_at: number };
 export const versions = (id: number) => call<{ current: { size: number; content_at: number }; items: Version[] }>(`/api/files/${id}/versions`);

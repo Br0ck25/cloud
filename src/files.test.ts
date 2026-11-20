@@ -822,3 +822,38 @@ test("zip: bad requests get a clear refusal", async () => {
   assert.equal((await zipOf(mom, [trashed.id])).status, 404, "a trashed item is not downloadable");
   assert.equal((await mom("/api/zip?ids=1", { method: "POST" })).status, 404);
 });
+
+// ---- all share links ----
+test("share links overview: every link on items you can see, who made it, and none that cannot work", async () => {
+  const mine = await putFile(mom, "links-mine.png", pattern(10));
+  const dir = await mkdir(mom, "LinksDir");
+  const doomed = await putFile(mom, "links-trashed.png", pattern(10));
+  const dadsPrivate = await putFile(dad, "links-dad-private.png", pattern(10));
+  const family = (await json(await mom("/api/files"))).items.find((i: any) => i.name === "Family");
+  const shared = await putFile(dad, "links-family.png", pattern(10), family.id);
+  const a = await makeShare(mom, mine.id, 7);
+  const b = await makeShare(mom, dir.id, null);
+  const c = await makeShare(mom, doomed.id);
+  const d = await makeShare(dad, dadsPrivate.id);
+  const e = await makeShare(dad, shared.id);
+  await mom(`/api/files/${doomed.id}`, { method: "DELETE" });
+  sql(`update shares set expires_at = 1 where id = ${a.id}`);
+
+  const all = (await json(await mom("/api/shares/all"))).items;
+  const ids = all.map((l: any) => l.id);
+  assert.ok(ids.includes(a.id) && ids.includes(b.id) && ids.includes(e.id), "her own links, including an expired one, and one on a Family file made by dad");
+  assert.ok(!ids.includes(c.id), "a link on a trashed item is not listed");
+  assert.ok(!ids.includes(d.id), "a link on dad's private file is not hers to see");
+  const row = (id: number) => all.find((l: any) => l.id === id);
+  assert.deepEqual([row(a.id).name, row(a.id).kind, row(a.id).made_by], ["links-mine.png", "file", "mom@example.com"]);
+  assert.equal(row(a.id).expires_at, 1);
+  assert.equal(row(b.id).expires_at, null);
+  assert.equal(row(b.id).kind, "folder");
+  assert.equal(row(e.id).made_by, "dad@example.com");
+  assert.deepEqual(ids, [...ids].sort((x: number, y: number) => y - x), "newest first");
+  assert.match(row(a.id).token, /^[\w-]{22}$/);
+
+  const his = (await json(await dad("/api/shares/all"))).items.map((l: any) => l.id);
+  assert.ok(his.includes(d.id) && his.includes(e.id) && !his.includes(a.id) && !his.includes(b.id), "dad sees his links and Family's, not mom's private ones");
+  assert.equal((await mom("/api/shares/all", { method: "POST" })).status, 404);
+});

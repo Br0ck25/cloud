@@ -2,8 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import * as api from "./api";
 import type { Item, Share } from "./api";
 
-const link = (s: Share) => `${location.origin}/s/${s.token}`;
-const status = (s: Share) => (s.expires_at === null ? "Never expires" : s.expires_at * 1000 < Date.now() ? "Expired" : `Expires ${new Date(s.expires_at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
+export const link = (s: Pick<Share, "token">) => `${location.origin}/s/${s.token}`;
+export const status = (s: Pick<Share, "expires_at">) => (s.expires_at === null ? "Never expires" : s.expires_at * 1000 < Date.now() ? "Expired" : `Expires ${new Date(s.expires_at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
 
 /** Create, copy and revoke public links for one item. */
 export function ShareSheet({ item, close }: { item: Item; close: () => void }) {

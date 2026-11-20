@@ -355,6 +355,26 @@ try {
     check(files(await order()).slice(0, 3).join() === "sort-b.bin,sort-c.bin,sort-a.bin", "the choice survives a reload: " + (await order()));
   });
 
+  await step("share links overview lists a link, and revoking it there switches it off", async () => {
+    const p = await newPage();
+    const album = (await (await p.request.post(U + "/api/folders", { data: { name: "LinkAlbum" } })).json()).id;
+    const link = await (await p.request.post(U + "/api/shares", { data: { node: album, days: 7 } })).json();
+    await home(p);
+    await p.click(".account summary");
+    await p.click(".account >> text=Share links");
+    await p.waitForSelector("h1:has-text('Share links')");
+    const rowSel = 'li:has-text("LinkAlbum")';
+    await p.waitForSelector(rowSel);
+    const text = await p.textContent(rowSel);
+    check(/Expires/.test(text) && /by you/.test(text), "row says when it ends and who made it: " + text.replace(/\s+/g, " ").trim());
+    const outsider = await browser.newPage();
+    check((await outsider.goto(`${U}/s/${link.token}`)).status() === 200, "the link works before revoking");
+    await p.click(`${rowSel} >> text=Revoke`);
+    await p.waitForSelector(rowSel, { state: "detached" });
+    check((await outsider.goto(`${U}/s/${link.token}`)).status() === 404, "and stops working after");
+    await p.waitForSelector("text=Link revoked");
+  });
+
   await step("no page broke the Content-Security-Policy", async () => { check(cspViolations.length === 0, cspViolations.join(" | ")); });
 } catch (e) {
   failed++;

@@ -66,6 +66,7 @@ progress { width: 40%; accent-color: var(--brand); }
 .sheet input { font: inherit; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: inherit; }
 .sheet input:focus { outline: 2px solid var(--brand); border-color: transparent; }
 .picker { max-height: 45vh; overflow: auto; }
+.links .btn { min-height: 36px; padding: 0 12px; }
 .stack { display: grid; min-width: 0; }
 .sheet .list .btn { min-height: 36px; padding: 0 12px; }
 .wrap { white-space: normal; margin: 0; }

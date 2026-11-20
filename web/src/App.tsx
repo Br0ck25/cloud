@@ -17,9 +17,9 @@ import { Admin } from "./Admin";
 import { Photos } from "./Photos";
 import { AskSheet } from "./AskSheet";
 import type { Ask } from "./AskSheet";
-import { size } from "./format";
+import { icon, size } from "./format";
+import { Links } from "./Links";
 
-const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
 const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const isMedia = (i: Item) => /^(image\/(?!svg)|video\/)/.test(i.mime ?? "");
 type Sort = "name" | "new" | "old" | "big";
@@ -53,6 +53,7 @@ export function App() {
   const inTrash = hash === "#/trash";
   const inAdmin = hash === "#/admin";
   const inPhotos = hash === "#/photos";
+  const inLinks = hash === "#/links";
   const folderId = folderOf(hash);
 
   const [me, setMe] = useState<{ id: number; email: string; role: string; backup_warning?: string | null } | null>(null);
@@ -86,7 +87,7 @@ export function App() {
   const load = () => {
     const n = ++latest.current;
     const h = location.hash;
-    if (h === "#/admin" || h === "#/photos") return Promise.resolve();
+    if (h === "#/admin" || h === "#/photos" || h === "#/links") return Promise.resolve();
     return (h === "#/trash" ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderOf(h)))
       .then((r) => { if (n === latest.current) { setParent(r.parent); setItems(r.items); setError(""); } })
       .catch((e) => { if (n === latest.current) setError(e.message); });
@@ -125,7 +126,7 @@ export function App() {
   const rows = found ?? (inTrash ? items : sorted(items, sort)); // search keeps the server's order; the trash is newest-deleted first
   const files = rows.filter((i) => i.kind === "file");
   // Automatic: a folder that is mostly photos and videos opens as a grid; the toggle next to the search box overrides it (and is remembered on this device).
-  const grid = !inTrash && !inAdmin && !inPhotos && !found && (view ? view === "grid" : files.length > 0 && files.filter(isMedia).length >= files.length * 0.6);
+  const grid = !inTrash && !inAdmin && !inPhotos && !inLinks && !found && (view ? view === "grid" : files.length > 0 && files.filter(isMedia).length >= files.length * 0.6);
   const selectable = (i: Item) => !(i.shared === 1 && i.parent_id === null); // the Family folder itself cannot be changed
   const chosen = rows.filter((i) => sel?.has(i.id));
   const ids = chosen.map((i) => i.id);
@@ -156,12 +157,13 @@ export function App() {
     <div class={drag ? "page drag" : "page"}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
       onDragLeave={() => setDrag(false)}
-      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash && !inAdmin && !inPhotos) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
+      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!inTrash && !inAdmin && !inPhotos && !inLinks) addFiles([...(e.dataTransfer?.files ?? [])]); }}>
       <header>
-        <h1>{inTrash || inAdmin || inPhotos ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : inAdmin ? "Admin" : inPhotos ? "Photos" : parent ? parent.name : "Family Cloud"}</h1>
+        <h1>{inTrash || inAdmin || inPhotos || inLinks ? <a href="#/">←</a> : parent ? <a href={back}>←</a> : null} {inTrash ? "Trash" : inAdmin ? "Admin" : inPhotos ? "Photos" : inLinks ? "Share links" : parent ? parent.name : "Family Cloud"}</h1>
         <details class="account">
           <summary class="who">{me?.email || "Account"}</summary>
           <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
+            <a href="#/links">Share links</a>
             {me?.role === "admin" && <a href="#/admin">Admin</a>}
             <a href="/cdn-cgi/access/logout">Sign out</a>
           </div>
@@ -173,6 +175,7 @@ export function App() {
       {inAdmin && me && <Admin me={me.id} ask={setAsk} backedUp={() => api.me().then(setMe, () => {})} />}
 
       {inPhotos && <Photos />}
+      {inLinks && me && <Links me={me.email} />}
 
       {sel && (
         <SelectBar count={chosen.length} total={rows.filter(selectable).length} onAll={() => selection.all(rows.filter(selectable).map((i) => i.id))} onClear={selection.clear}
@@ -191,7 +194,7 @@ export function App() {
         </div>
       )}
 
-      {!inTrash && !inAdmin && !inPhotos && !sel && (
+      {!inTrash && !inAdmin && !inPhotos && !inLinks && !sel && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
           {!folderId && <label class="btn">Back up photos<input type="file" multiple accept="image/*,video/*" hidden onChange={(e) => { const f = [...(e.currentTarget.files ?? [])]; e.currentTarget.value = ""; if (f.length) setBacking(f); }} /></label>}
@@ -201,7 +204,7 @@ export function App() {
         </div>
       )}
 
-      {!inTrash && !inAdmin && !inPhotos && !sel && (
+      {!inTrash && !inAdmin && !inPhotos && !inLinks && !sel && (
         <>
           <div class="searchrow">
             <input class="search" type="search" placeholder="Search files and folders" aria-label="Search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
@@ -244,7 +247,7 @@ export function App() {
       )}
       {grid && !rows.length && !error && <p class="empty">Nothing here yet. Upload a file or drop it on this page.</p>}
 
-      {!inAdmin && !inPhotos && !grid && <ul class="list">
+      {!inAdmin && !inPhotos && !inLinks && !grid && <ul class="list">
         {rows.map((i) => {
           const locked = i.shared === 1 && i.parent_id === null;
           return (

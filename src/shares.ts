@@ -5,6 +5,17 @@ const newToken = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Ui
 
 /** Manage public links for items the signed-in person can access. */
 export async function handleShares(req: Request, env: Env, user: User, url: URL): Promise<Response | undefined> {
+  // Every link on items you can see (yours and Family's), newest first; links on trashed items do not work, so they are not listed.
+  if (url.pathname === "/api/shares/all" && req.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `with recursive dead(id) as (select id from nodes where trashed_at is not null union all select n.id from nodes n join dead on n.parent_id = dead.id)
+       select s.id, s.token, s.expires_at, s.created_at, n.id as node_id, n.name, n.kind, n.mime, u.email as made_by
+       from shares s join nodes n on n.id = s.node_id join users u on u.id = s.created_by
+       where n.id not in (select id from dead) and (n.owner_id = ? or n.owner_id is null) order by s.id desc limit 300`,
+    ).bind(user.id).all();
+    return Response.json({ items: results });
+  }
+
   const m = url.pathname.match(/^\/api\/shares(?:\/(\d+))?$/);
   if (!m) return undefined;
 
