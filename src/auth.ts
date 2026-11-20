@@ -39,9 +39,9 @@ async function accessKeys(teamDomain: string): Promise<Jwk[]> {
 
 /** The signed-in family member, or a 401 (not signed in) / 403 (signed in but not on the list) Response. */
 export async function requireUser(req: Request, env: Env): Promise<User | Response> {
-  const dev: string = env.DEV_EMAIL; // only set via the gitignored .dev.vars; "" in production
+  const dev: string = env.DEV_EMAIL; // only set via the gitignored .dev.vars or tests; "" in production, where it must stay empty
   const token = req.headers.get("Cf-Access-Jwt-Assertion");
-  const email = dev ? dev.toLowerCase() : token && (await verifyAccessJwt(token, env.TEAM_DOMAIN, env.ACCESS_AUD, () => accessKeys(env.TEAM_DOMAIN)));
+  const email = dev ? (req.headers.get("x-dev-email") ?? dev).toLowerCase() : token && (await verifyAccessJwt(token, env.TEAM_DOMAIN, env.ACCESS_AUD, () => accessKeys(env.TEAM_DOMAIN)));
   const admin: string = env.ADMIN_EMAIL;
   if (!email) return new Response("Unauthorized", { status: 401 });
   if (admin && email === admin.toLowerCase()) {

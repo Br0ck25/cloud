@@ -37,7 +37,7 @@ Dropped from the earlier plan: Queues, Vectorize/Workers AI content search, quot
 ## Milestones (each ends with a runnable check)
 1. **Skeleton** (done). `npm run dev`, `curl /api/health`.
 2. **Users + auth** (done, untested against real Cloudflare): `migrations/0001_users.sql`, Access JWT check in `src/auth.ts`, `GET /api/me`, CI deploy workflow. Only `ADMIN_EMAIL` is auto-created; everyone else must be added by an admin. Still to confirm after first deploy: the PWA keeps its Access session on iOS/Android.
-3. **Files API**: create folder, single-PUT upload, list, download with Range, rename, move, trash/restore. Check: scripted curl round-trip, byte-for-byte compare.
+3. **Files API** (done, tested locally): folders, single-PUT upload (max 100 MB), list, download with Range, rename, move, trash/restore, trash list. `migrations/0002_nodes.sql`, `src/files.ts`. Spaces: each node is owned by one person or by the shared Family space (`owner_id` null); children inherit the owner and nothing moves between spaces. Duplicate names in a folder are rejected (409). `npm test` starts a real local Worker and exercises the routes. Per-person and link shares are milestone 6.
 4. **Web UI + PWA shell**: file browser, drag-drop and picker upload, image/pdf/video preview, manifest, service worker. Check: Playwright smoke test; Lighthouse installable.
 5. **Large uploads**: multipart with progress and resume. Check: 500 MB file round-trips.
 6. **Sharing**: Family root, per-person shares, link shares, Share Target. Check: link works logged out; expired/revoked link 404s.

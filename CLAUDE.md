@@ -14,6 +14,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 ## Layout
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
+- `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan
 
