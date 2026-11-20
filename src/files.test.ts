@@ -123,3 +123,26 @@ test("people only see their own files plus the Family folder", async () => {
   assert.equal((await mom(`/api/files/${family.id}`, { method: "DELETE" })).status, 400);
   assert.equal((await as("stranger@example.com")("/api/files")).status, 403);
 });
+
+test("thumbnails: store, serve, replace, and the rules around them", async () => {
+  const f = await json(await upload(mom, "pic.png", new Uint8Array([1, 2, 3])));
+  assert.equal(f.thumb, 0);
+  assert.equal((await mom(`/api/files/${f.id}/thumb`)).status, 404);
+  const put = (body: BodyInit, type = "image/jpeg", who = mom) => who(`/api/files/${f.id}/thumb`, { method: "PUT", body, headers: { "content-type": type } });
+  assert.equal((await put(new Uint8Array([0xff, 0xd8, 1]))).status, 204);
+  const got = await mom(`/api/files/${f.id}/thumb`);
+  assert.equal(got.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(new Uint8Array(await got.arrayBuffer()), new Uint8Array([0xff, 0xd8, 1]));
+  assert.equal((await json(await mom("/api/files"))).items.find((i: any) => i.id === f.id).thumb, 1);
+  assert.equal((await put(new Uint8Array([9, 9]))).status, 204); // replace
+  assert.deepEqual(new Uint8Array(await (await mom(`/api/files/${f.id}/thumb`)).arrayBuffer()), new Uint8Array([9, 9]));
+
+  assert.equal((await put("<svg/>", "image/svg+xml")).status, 400);
+  assert.equal((await put(new Uint8Array(300_001))).status, 413);
+  assert.equal((await put(new Uint8Array([1]), "image/jpeg", dad)).status, 404); // not dad's file
+  assert.equal((await dad(`/api/files/${f.id}/thumb`)).status, 404);
+  const folder = await mkdir(mom, "ThumbFolder");
+  assert.equal((await mom(`/api/files/${folder.id}/thumb`, { method: "PUT", body: new Uint8Array([1]), headers: { "content-type": "image/jpeg" } })).status, 400);
+  await mom(`/api/files/${f.id}`, { method: "DELETE" });
+  assert.equal((await mom(`/api/files/${f.id}/thumb`)).status, 404); // trashed
+});

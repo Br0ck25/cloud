@@ -15,7 +15,7 @@ Read `docs/PLAN.md` for architecture and milestones.
 - `src/index.ts` Worker entry and routing
 - `src/auth.ts` Access JWT check and `requireUser` (use it in every authenticated route)
 - `src/files.ts` files API (`handleFiles`): list, upload, download, rename/move, trash
-- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `public/` manifest, service worker, icons
+- `web/` the PWA (Preact + Vite): `src/App.tsx` screens, `src/api.ts` all server calls, `src/thumb.ts` browser thumbnails, `src/style.css` theme tokens (colors live only there; keep light and dark in sync), `public/` manifest, service worker, icons
 - `migrations/` D1 SQL migrations (numbered, append-only)
 - `docs/PLAN.md` plan
 

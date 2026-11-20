@@ -1,6 +1,7 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "./api";
 import type { Item } from "./api";
+import { makeThumb } from "./thumb";
 
 const MAX_UPLOAD = 100_000_000;
 const icon = (i: Item) => (i.kind === "folder" ? "📁" : i.mime?.startsWith("image/") ? "🖼️" : i.mime?.startsWith("video/") ? "🎬" : i.mime?.startsWith("audio/") ? "🎵" : "📄");
@@ -9,6 +10,24 @@ const when = (s: number) => new Date(s * 1000).toLocaleDateString();
 const canPreview = (i: Item) => /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/.test(i.mime ?? "");
 
 type Upload = { name: string; pct: number; error?: string };
+type Ask = { title: string; value: string; ok: (v: string) => void };
+
+function AskSheet({ ask, close }: { ask: Ask; close: () => void }) {
+  const [v, setV] = useState(ask.value);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, []);
+  return (
+    <div class="modal" onClick={close}>
+      <form class="sheet" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (v.trim()) ask.ok(v.trim()); close(); }}>
+        <h2>{ask.title}</h2>
+        <input ref={input} value={v} onInput={(e) => setV(e.currentTarget.value)} />
+        <div class="row"><button type="button" class="btn" onClick={close}>Cancel</button><button class="btn primary">Save</button></div>
+      </form>
+    </div>
+  );
+}
+
+const Tile = ({ i }: { i: Item }) => <span class="tile">{i.thumb ? <img src={api.thumbUrl(i.id)} alt="" loading="lazy" /> : icon(i)}</span>;
 
 function useHash() {
   const [hash, setHash] = useState(location.hash);
@@ -33,6 +52,7 @@ export function App() {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [open, setOpen] = useState<Item | null>(null);
   const [drag, setDrag] = useState(false);
+  const [ask, setAsk] = useState<Ask | null>(null);
 
   const load = () =>
     (inTrash ? api.trashed().then((r) => ({ parent: null, items: r.items })) : api.list(folderId))
@@ -48,12 +68,16 @@ export function App() {
       const set = (u: Partial<Upload>) => setUploads((all) => all.map((x) => (x.name === f.name ? { ...x, ...u } : x)));
       setUploads((all) => [...all.filter((x) => x.name !== f.name), { name: f.name, pct: 0 }]);
       if (f.size > MAX_UPLOAD) { set({ error: "Too large for now (100 MB limit)" }); continue; }
-      try { await api.upload(f, folderId, (p) => set({ pct: p })); setUploads((all) => all.filter((x) => x.name !== f.name)); await load(); }
-      catch (e) { set({ error: (e as Error).message }); }
+      try {
+        const saved = await api.upload(f, folderId, (p) => set({ pct: p }));
+        setUploads((all) => all.filter((x) => x.name !== f.name));
+        await load();
+        const jpeg = await makeThumb(f);
+        if (jpeg && (await api.putThumb(saved.id, jpeg)).ok) await load();
+      } catch (e) { set({ error: (e as Error).message }); }
     }
   }
 
-  const ask = (msg: string, initial = "") => prompt(msg, initial)?.trim() || null;
   const back = parent ? (parent.parent_id ? `#/f/${parent.parent_id}` : "#/") : "#/";
 
   return (
@@ -69,7 +93,7 @@ export function App() {
       {!inTrash && (
         <div class="bar">
           <label class="btn primary">Upload<input type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} /></label>
-          <button class="btn" onClick={() => { const n = ask("Folder name"); if (n) act(api.mkdir(n, folderId)); }}>New folder</button>
+          <button class="btn" onClick={() => setAsk({ title: "New folder", value: "", ok: (n) => act(api.mkdir(n, folderId)) })}>New folder</button>
           <a class="btn" href="#/trash">Trash</a>
         </div>
       )}
@@ -86,17 +110,17 @@ export function App() {
           const locked = i.shared === 1 && i.parent_id === null;
           return (
             <li key={i.id}>
-              {inTrash ? <span class="main"><span class="ico">{icon(i)}</span><span class="name">{i.name}</span></span> : (
+              {inTrash ? <span class="main"><Tile i={i} /><span class="name">{i.name}</span></span> : (
                 <a class="main" href={i.kind === "folder" ? `#/f/${i.id}` : undefined}
                   onClick={i.kind === "file" ? (e) => { e.preventDefault(); canPreview(i) ? setOpen(i) : (location.href = api.fileUrl(i.id, true)); } : undefined}>
-                  <span class="ico">{icon(i)}</span><span class="name">{i.name}</span>
+                  <Tile i={i} /><span class="name">{i.name}</span>
                 </a>
               )}
               <span class="meta">{locked ? "Shared" : `${size(i.size)} ${when(i.updated_at)}`}</span>
               {inTrash ? <button class="btn" onClick={() => act(api.restore(i.id))}>Restore</button> : !locked && (
                 <details class="more"><summary aria-label="Actions">⋮</summary>
                   <div class="menu" onClick={(e) => e.currentTarget.closest("details")?.removeAttribute("open")}>
-                    <button onClick={() => { const n = ask("New name", i.name); if (n) act(api.rename(i.id, n)); }}>Rename</button>
+                    <button onClick={() => setAsk({ title: "Rename", value: i.name, ok: (n) => act(api.rename(i.id, n)) })}>Rename</button>
                     {i.kind === "file" && <a href={api.fileUrl(i.id, true)}>Download</a>}
                     <button onClick={() => act(api.trash(i.id))}>Delete</button>
                   </div>
@@ -107,6 +131,8 @@ export function App() {
         })}
         {!items.length && !error && <li class="empty">{inTrash ? "Trash is empty." : "Nothing here yet. Upload a file or drop it on this page."}</li>}
       </ul>
+
+      {ask && <AskSheet ask={ask} close={() => setAsk(null)} />}
 
       {open && (
         <div class="modal" onClick={() => setOpen(null)}>

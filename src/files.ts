@@ -2,11 +2,12 @@ import type { User } from "./auth";
 
 type Node = {
   id: number; parent_id: number | null; owner_id: number | null; name: string; kind: "file" | "folder";
-  size: number | null; mime: string | null; blob_key: string | null; trashed_at: number | null;
+  size: number | null; mime: string | null; blob_key: string | null; thumb_key: string | null; trashed_at: number | null;
 };
 
+const MAX_THUMB = 300_000;
 const MAX_UPLOAD = 100_000_000; // Worker request bodies stop at ~100 MB; bigger files need multipart (milestone 5)
-const COLS = "id, parent_id, name, kind, size, mime, updated_at, owner_id is null as shared";
+const COLS = "id, parent_id, name, kind, size, mime, updated_at, owner_id is null as shared, thumb_key is not null as thumb";
 // Only types a browser cannot run code from may open inline; everything else downloads.
 const INLINE = /^(image\/(?!svg)|video\/|audio\/|application\/pdf$)/;
 
@@ -40,7 +41,7 @@ const isFamilyRoot = (n: Node) => n.parent_id === null && n.owner_id === null;
 
 export async function handleFiles(req: Request, env: Env, user: User, url: URL): Promise<Response | undefined> {
   const { pathname, searchParams } = url;
-  const m = pathname.match(/^\/api\/files(?:\/(\d+)(\/restore)?)?$/);
+  const m = pathname.match(/^\/api\/files(?:\/(\d+)(\/restore|\/thumb)?)?$/);
   const id = m?.[1] ? Number(m[1]) : null;
 
   if (pathname === "/api/folders" && req.method === "POST") {
@@ -97,7 +98,7 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
   const node = await getNode(env, user, id);
   if (!node) return err(404, "not found");
 
-  if (m[2]) {
+  if (m[2] === "/restore") {
     if (req.method !== "POST" || !node.trashed_at) return err(404, "not found");
     const parent = node.parent_id && (await env.DB.prepare("select trashed_at from nodes where id = ?").bind(node.parent_id).first<{ trashed_at: number | null }>());
     if (parent && parent.trashed_at) return err(409, "restore the parent folder first");
@@ -105,6 +106,26 @@ export async function handleFiles(req: Request, env: Env, user: User, url: URL):
     return r instanceof Response ? r : Response.json(await item(env, node.id));
   }
   if (node.trashed_at) return err(404, "not found");
+
+  if (m[2] === "/thumb") {
+    if (req.method === "GET") {
+      const obj = node.thumb_key && (await env.FILES.get(node.thumb_key));
+      return obj ? new Response(obj.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" } }) : err(404, "no thumbnail");
+    }
+    if (req.method === "PUT") {
+      if (node.kind !== "file") return err(400, "not a file");
+      if (req.headers.get("content-type") !== "image/jpeg") return err(400, "thumbnails must be image/jpeg");
+      const len = Number(req.headers.get("content-length"));
+      if (!req.headers.has("content-length")) return err(411, "content-length required");
+      if (len > MAX_THUMB) return err(413, "thumbnail too large");
+      const key = `thumbs/${crypto.randomUUID()}`;
+      await env.FILES.put(key, req.body, { httpMetadata: { contentType: "image/jpeg" } });
+      await env.DB.prepare("update nodes set thumb_key = ? where id = ?").bind(key, node.id).run();
+      if (node.thumb_key) await env.FILES.delete(node.thumb_key);
+      return new Response(null, { status: 204 });
+    }
+    return undefined;
+  }
 
   if (req.method === "GET") {
     if (node.kind !== "file" || !node.blob_key) return err(400, "not a file");
